@@ -159,6 +159,17 @@ static inline int ssd_mb( x264_t *h )
     return i_ssd;
 }
 
+// 极端的情况，被反复调用，以获取最佳的 rdo 结果。
+// 被调用很频繁，计算量很大
+// rd cost 计算需要 mb 编码，为什么？？？
+// rd_cost_mb函数用于计算宏块的代价（cost），其中包括编码宏块所需的比特数和失真度量。
+
+// 在函数实现中，rd_cost_mb首先调用x264_macroblock_encode函数对宏块进行编码，以获取编码宏块的比特数。然后，它调用其他函数计算失真度量（distortion）。
+
+// x264_macroblock_encode函数的作用是将宏块编码为比特流。它使用编码器的上下文（x264_t结构体）和宏块分析的上下文（x264_mb_analysis_t结构体）来生成编码宏块的比特数。该函数会更新编码器的状态，包括参考帧缓存和比特流缓冲区等。
+
+// 在计算宏块的代价时，比特数和失真度量是两个重要的因素。比特数反映了编码宏块所需的比特数，而失真度量则用于评估编码后的图像与原始图像之间的差异。通过结合比特数和失真度量，可以计算出宏块的总代价，从而进行决策，如选择最佳的编码方式和参数。
+// ref 调完后再做一次rd_mb_cost计算
 static int rd_cost_mb( x264_t *h, int i_lambda2 )
 {
     int b_transform_bak = h->mb.b_transform_8x8;
@@ -166,7 +177,7 @@ static int rd_cost_mb( x264_t *h, int i_lambda2 )
     int i_bits;
     int type_bak = h->mb.i_type;
 
-    x264_macroblock_encode( h );
+    x264_macroblock_encode( h ); // 这里重新编码了一次。
 
     if( h->mb.b_deblock_rdo )
         x264_macroblock_deblock( h );
@@ -193,6 +204,10 @@ static int rd_cost_mb( x264_t *h, int i_lambda2 )
     h->mb.b_transform_8x8 = b_transform_bak;
     h->mb.i_type = type_bak;
 
+    // 残差 + 比特数，
+    // 残差越大，rdcost 越大，越不好
+    // 比特数越大，rdcost 越大，越不好
+    // 两个都小的话，那么最好？
     return X264_MIN( i_ssd + i_bits, COST_MAX );
 }
 

@@ -73,6 +73,7 @@ static void lookahead_slicetype_decide( x264_t *h )
     int shift_frames = h->lookahead->next.list[0]->i_bframes + 1;
 
     x264_pthread_mutex_lock( &h->lookahead->ofbuf.mutex );
+    // 果然，如果 lookahead 已经分析好很多帧，但是下游并没有过来取数据的话，那么会一直等待 buffer 被清空的信号量
     while( h->lookahead->ofbuf.i_size == h->lookahead->ofbuf.i_max_size )
         x264_pthread_cond_wait( &h->lookahead->ofbuf.cv_empty, &h->lookahead->ofbuf.mutex );
 
@@ -87,9 +88,10 @@ static void lookahead_slicetype_decide( x264_t *h )
     x264_pthread_mutex_unlock( &h->lookahead->ofbuf.mutex );
 }
 
+// lookahead 多线程任务入口
 REALIGN_STACK static void *lookahead_thread( x264_t *h )
 {
-    while( 1 )
+    while( 1 ) // 循环处理，除非被要求退出
     {
         x264_pthread_mutex_lock( &h->lookahead->ifbuf.mutex );
         if( h->lookahead->b_exit_thread )
@@ -97,12 +99,18 @@ REALIGN_STACK static void *lookahead_thread( x264_t *h )
             x264_pthread_mutex_unlock( &h->lookahead->ifbuf.mutex );
             break;
         }
+        // frame buffer 队列是多个线程共享的，需加锁
         x264_pthread_mutex_lock( &h->lookahead->next.mutex );
         int shift = X264_MIN( h->lookahead->next.i_max_size - h->lookahead->next.i_size, h->lookahead->ifbuf.i_size );
+        // 去一些帧出来，队列下标移位
+        // lookahead_shift( x264_sync_frame_list_t *dst, x264_sync_frame_list_t *src, int count )
+        // 从 ifbuf 里面，放到 next 里面
         lookahead_shift( &h->lookahead->next, &h->lookahead->ifbuf, shift );
         x264_pthread_mutex_unlock( &h->lookahead->next.mutex );
+        // 如果 next 还是不够帧数量的话，只能等待
         if( h->lookahead->next.i_size <= h->lookahead->i_slicetype_length + h->param.b_vfr_input )
         {
+            // 空了，等待
             while( !h->lookahead->ifbuf.i_size && !h->lookahead->b_exit_thread )
                 x264_pthread_cond_wait( &h->lookahead->ifbuf.cv_fill, &h->lookahead->ifbuf.mutex );
             x264_pthread_mutex_unlock( &h->lookahead->ifbuf.mutex );
@@ -110,6 +118,7 @@ REALIGN_STACK static void *lookahead_thread( x264_t *h )
         else
         {
             x264_pthread_mutex_unlock( &h->lookahead->ifbuf.mutex );
+            // next 帧数量够了，直接开始帧分析
             lookahead_slicetype_decide( h );
         }
     }   /* end of input frames */
@@ -129,12 +138,13 @@ REALIGN_STACK static void *lookahead_thread( x264_t *h )
 
 #endif
 
+// lookahead 初始化
 int x264_lookahead_init( x264_t *h, int i_slicetype_length )
 {
     x264_lookahead_t *look;
     CHECKED_MALLOCZERO( look, sizeof(x264_lookahead_t) );
     for( int i = 0; i < h->param.i_threads; i++ )
-        h->thread[i]->lookahead = look;
+        h->thread[i]->lookahead = look; // 初始化每个线程里面的 lookahead，都是指向同一个 lookahead!!!
 
     look->i_last_keyframe = - h->param.i_keyint_max;
     look->b_analyse_keyframe = (h->param.rc.b_mb_tree || (h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead))
@@ -142,14 +152,16 @@ int x264_lookahead_init( x264_t *h, int i_slicetype_length )
     look->i_slicetype_length = i_slicetype_length;
 
     /* init frame lists */
+    // 编码的时候，需要缓存几个帧 Lookahead 才能开始工作
     if( x264_sync_frame_list_init( &look->ifbuf, h->param.i_sync_lookahead+3 ) ||
         x264_sync_frame_list_init( &look->next, h->frames.i_delay+3 ) ||
         x264_sync_frame_list_init( &look->ofbuf, h->frames.i_delay+3 ) )
         goto fail;
 
-    if( !h->param.i_sync_lookahead )
+    if( !h->param.i_sync_lookahead ) // 如果是同步处理，不初始化线程相关资源
         return 0;
 
+    // lookahead 可以多线程处理
     x264_t *look_h = h->thread[h->param.i_threads];
     *look_h = *h;
     if( x264_macroblock_cache_allocate( look_h ) )
@@ -158,6 +170,7 @@ int x264_lookahead_init( x264_t *h, int i_slicetype_length )
     if( x264_macroblock_thread_allocate( look_h, 1 ) < 0 )
         goto fail;
 
+    // 这个应该 lookahead 分发线程
     if( x264_pthread_create( &look->thread_handle, NULL, (void*)lookahead_thread, look_h ) )
         goto fail;
     look->b_thread_active = 1;
@@ -168,6 +181,7 @@ fail:
     return -1;
 }
 
+// 是否 Lookahead 相关资源
 void x264_lookahead_delete( x264_t *h )
 {
     if( h->param.i_sync_lookahead )
@@ -191,9 +205,11 @@ void x264_lookahead_delete( x264_t *h )
 
 void x264_lookahead_put_frame( x264_t *h, x264_frame_t *frame )
 {
+    // 同步的话，push ifbuf
     if( h->param.i_sync_lookahead )
         x264_sync_frame_list_push( &h->lookahead->ifbuf, frame );
     else
+    // 否则放到，next，这有什么不同呢
         x264_sync_frame_list_push( &h->lookahead->next, frame );
 }
 
@@ -209,22 +225,29 @@ int x264_lookahead_is_empty( x264_t *h )
 
 static void lookahead_encoder_shift( x264_t *h )
 {
+    // out frame buffer 没有，直接退出
     if( !h->lookahead->ofbuf.i_size )
         return;
     int i_frames = h->lookahead->ofbuf.list[0]->i_bframes + 1;
     while( i_frames-- )
     {
+        // 从 lookahead 里面取出来，放到 encoder 里面，h 从 encoder 里面传进来
+        // 在这里完成从 lookahead 到 encoder 的帧传递
         x264_frame_push( h->frames.current, x264_frame_shift( h->lookahead->ofbuf.list ) );
-        h->lookahead->ofbuf.i_size--;
+        h->lookahead->ofbuf.i_size--; // 计数器减一
     }
+    // 触发信号，通知其他工作线程？out frame buffer 已经清空了，通知其他线程继续干活
+    // 为什么需要等待这个信号量呢，难道是 buffer 已经满了？
     x264_pthread_cond_broadcast( &h->lookahead->ofbuf.cv_empty );
 }
 
+// encoder 调用
 void x264_lookahead_get_frames( x264_t *h )
 {
     if( h->param.i_sync_lookahead )
     {   /* We have a lookahead thread, so get frames from there */
         x264_pthread_mutex_lock( &h->lookahead->ofbuf.mutex );
+        // 一直等待，直到有结果为止
         while( !h->lookahead->ofbuf.i_size && h->lookahead->b_thread_active )
             x264_pthread_cond_wait( &h->lookahead->ofbuf.cv_fill, &h->lookahead->ofbuf.mutex );
         lookahead_encoder_shift( h );
@@ -243,6 +266,7 @@ void x264_lookahead_get_frames( x264_t *h )
 
         /* For MB-tree and VBV lookahead, we have to perform propagation analysis on I-frames too. */
         if( h->lookahead->b_analyse_keyframe && IS_X264_TYPE_I( h->lookahead->last_nonb->i_type ) )
+            // 帧分析，IBP 确定
             x264_slicetype_analyse( h, shift_frames );
 
         lookahead_encoder_shift( h );

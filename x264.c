@@ -355,6 +355,8 @@ static void print_version_info( void )
 #endif
 }
 
+// x264 可执行文件，相当于一个 demo，整体 x264 API 是怎么使用的
+// 比如 yuv 编码为 264 时，是怎么处理的
 REALIGN_STACK int main( int argc, char **argv )
 {
     if( argc == 4 && !strcmp( argv[1], "--autocomplete" ) )
@@ -1840,6 +1842,7 @@ static void parse_qpfile( cli_opt_t *opt, x264_picture_t *pic, int i_frame )
     }
 }
 
+// x264 编码视频帧的入口
 static int encode_frame( x264_t *h, hnd_t hout, x264_picture_t *pic, int64_t *last_dts )
 {
     x264_picture_t pic_out;
@@ -1847,6 +1850,7 @@ static int encode_frame( x264_t *h, hnd_t hout, x264_picture_t *pic, int64_t *la
     int i_nal;
     int i_frame_size = 0;
 
+    // 这里开始调用 x264 提供的 API，这里才是库的入口
     i_frame_size = x264_encoder_encode( h, &nal, &i_nal, pic, &pic_out );
 
     FAIL_IF_ERROR( i_frame_size < 0, "x264_encoder_encode failed\n" );
@@ -1946,9 +1950,11 @@ static int encode( x264_param_t *param, cli_opt_t *opt )
         param->i_timebase_den = param->i_fps_num * pulldown->fps_factor;
     }
 
+    // 初始化编码器
     h = x264_encoder_open( param );
     FAIL_IF_ERROR2( !h, "x264_encoder_open failed\n" );
 
+    // 设置相关参数
     x264_encoder_parameters( h, param );
 
     FAIL_IF_ERROR2( cli_output.set_param( opt->hout, param ), "can't set outfile param\n" );

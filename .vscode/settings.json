@@ -1,4 +1,29 @@
 {
     "editor.formatOnPaste": false,
     "editor.formatOnSave": false,
+    "C_Cpp.default.defines": [
+        "BIT_DEPTH=8",
+        "HAVE_THREAD=1",
+    ],
+    "editor.wordBasedSuggestions": "matchingDocuments",
+    "files.associations": {
+        "*.js": "javascript",
+        "*.vue": "vue",
+        "*.cjson": "jsonc",
+        "*.wxss": "css",
+        "*.wxs": "javascript",
+        "README": "markdown",
+        "common.h": "c",
+        "analyse.h": "c",
+        "__config": "c",
+        "__threading_support": "c",
+        "version": "c",
+        "memory": "c",
+        "unistd.h": "c"
+    },
+    "files.exclude": {
+        "*.a": true,
+        "**/*.o": true
+    }
+
 }

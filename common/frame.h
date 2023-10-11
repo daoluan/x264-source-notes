@@ -180,12 +180,12 @@ typedef struct x264_frame
 #if HAVE_OPENCL
     x264_frame_opencl_t opencl;
 #endif
-} x264_frame_t;
+} x264_frame_t; // 帧结构
 
 /* synchronized frame list */
 typedef struct
 {
-   x264_frame_t **list;
+   x264_frame_t **list; // 注意是，二级指针
    int i_max_size;
    int i_size;
    x264_pthread_mutex_t     mutex;

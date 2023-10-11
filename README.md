@@ -1,0 +1,1 @@
+read [notes.md](./note.md)

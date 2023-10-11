@@ -688,6 +688,7 @@ void x264_frame_cond_broadcast( x264_frame_t *frame, int i_lines_completed )
     x264_pthread_mutex_unlock( &frame->mutex );
 }
 
+// frame 多线程，信号量
 int x264_frame_cond_wait( x264_frame_t *frame, int i_lines_completed )
 {
     int completed;
@@ -707,6 +708,7 @@ void x264_threadslice_cond_broadcast( x264_t *h, int pass )
     x264_pthread_mutex_unlock( &h->mutex );
 }
 
+// slice 多线程信号量，等待信号量的地方就四五个，很容易解锁 x264 的多线程结构
 void x264_threadslice_cond_wait( x264_t *h, int pass )
 {
     x264_pthread_mutex_lock( &h->mutex );
@@ -761,11 +763,16 @@ void x264_frame_unshift( x264_frame_t **list, x264_frame_t *frame )
 
 x264_frame_t *x264_frame_shift( x264_frame_t **list )
 {
+    // 记录第一个
     x264_frame_t *frame = list[0];
+
+    // 后面的往前移动
     int i;
     for( i = 0; list[i]; i++ )
         list[i] = list[i+1];
     assert(frame);
+
+    // 返回第一个
     return frame;
 }
 
@@ -888,7 +895,7 @@ x264_frame_t *x264_sync_frame_list_pop( x264_sync_frame_list_t *slist )
 {
     x264_frame_t *frame;
     x264_pthread_mutex_lock( &slist->mutex );
-    while( !slist->i_size )
+    while( !slist->i_size ) // 没有帧数据，卡死等待
         x264_pthread_cond_wait( &slist->cv_fill, &slist->mutex );
     frame = slist->list[ --slist->i_size ];
     slist->list[ slist->i_size ] = NULL;

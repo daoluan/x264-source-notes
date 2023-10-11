@@ -29,6 +29,8 @@
 #include "macroblock.h"
 #include "me.h"
 
+// 运动预测
+
 /* presets selected from good points on the speed-vs-quality curve of several test videos
  * subpel_iters[i_subpel_refine] = { refine_hpel, refine_qpel, me_hpel, me_qpel }
  * where me_* are the number of EPZS iterations run on all candidate block types,

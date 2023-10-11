@@ -174,6 +174,7 @@ static void mb_encode_i16x16( x264_t *h, int p, int i_qp )
     if( h->mb.b_trellis )
     {
         for( int idx = 0; idx < 16; idx++ )
+            // 格子量化？
             if( x264_quant_4x4_trellis( h, dct4x4[idx], i_quant_cat, i_qp, ctx_cat_plane[DCT_LUMA_AC][p], 1, !!p, idx ) )
             {
                 block_cbp = 0xf;

@@ -677,7 +677,7 @@ static int param_apply_tune( x264_param_t *param, const char *tune )
             param->rc.i_lookahead = 0;
             param->i_sync_lookahead = 0;
             param->i_bframe = 0;
-            param->b_sliced_threads = 1;
+            param->b_sliced_threads = 1; // 为了达到低延时的效果，启用 slice 多线程，frame 多线程，肯定会引入更多的延时
             param->b_vfr_input = 0;
             param->rc.b_mb_tree = 0;
         }

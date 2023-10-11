@@ -558,6 +558,7 @@ static int validate_parameters( x264_t *h, int b_open )
 
     if( h->param.i_threads == X264_THREADS_AUTO )
     {
+        // 默认线程数和机器的 CPU 核心相关
         h->param.i_threads = x264_cpu_num_processors() * (h->param.b_sliced_threads?2:3)/2;
         /* Avoid too many threads as they don't improve performance and
          * complicate VBV. Capped at an arbitrary 2 rows per thread. */
@@ -577,12 +578,14 @@ static int validate_parameters( x264_t *h, int b_open )
             h->param.i_threads = X264_MIN( h->param.i_threads, max_sliced_threads );
     }
     h->param.i_threads = x264_clip3( h->param.i_threads, 1, X264_THREAD_MAX );
-    if( h->param.i_threads == 1 )
+    if( h->param.i_threads == 1 ) // 特别的，线程只指定 1 的话，sliced threads 是关闭的，lookahead 多线程启用
     {
         h->param.b_sliced_threads = 0;
         h->param.i_lookahead_threads = 1;
     }
-    h->i_thread_frames = h->param.b_sliced_threads ? 1 : h->param.i_threads;
+    /* Number of different frames being encoded by threads;
+                                      * 1 when sliced-threads is on. */
+    h->i_thread_frames = h->param.b_sliced_threads ? 1 : h->param.i_threads; // 除非是 lowlantency 模式，i_thread_frames == i_thread
     if( h->i_thread_frames > 1 )
         h->param.nalu_process = NULL;
 
@@ -1270,6 +1273,7 @@ static int validate_parameters( x264_t *h, int b_open )
 
     h->param.analyse.i_weighted_pred = x264_clip3( h->param.analyse.i_weighted_pred, X264_WEIGHTP_NONE, X264_WEIGHTP_SMART );
 
+    // lookahead 线程数没有指定，那么通过其他参数来综合决策
     if( h->param.i_lookahead_threads == X264_THREADS_AUTO )
     {
         if( h->param.b_sliced_threads )
@@ -1290,6 +1294,7 @@ static int validate_parameters( x264_t *h, int b_open )
             {{{6,6,6,6}, {3,3,3,3}, {4,4,4,4}, {6,6,6,6}, {12,12,12,12}},
              {{3,2,1,1}, {2,1,1,1}, {4,3,2,1}, {6,4,3,2}, {12, 9, 6, 4}}};
 
+            // 线程数量决策，也是有一个查表的过程
             h->param.i_lookahead_threads = h->param.i_threads / lookahead_thread_div[badapt][subme][bframes];
             /* Since too many lookahead threads significantly degrades lookahead accuracy, limit auto
              * lookahead threads to about 8 macroblock rows high each at worst.  This number is chosen
@@ -1366,7 +1371,7 @@ static int validate_parameters( x264_t *h, int b_open )
     if( h->param.i_nal_hrd == X264_NAL_HRD_CBR )
         h->param.rc.b_filler = 1;
 
-    /* ensure the booleans are 0 or 1 so they can be used in math */
+    /* ensure the booleans are 0 or 1 so they can be used in math */ // 强制要么 0 要么 1
 #define BOOLIFY(x) h->param.x = !!h->param.x
     BOOLIFY( b_cabac );
     BOOLIFY( b_constrained_intra );
@@ -1600,6 +1605,7 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
     h->mb.b_adaptive_mbaff = PARAM_INTERLACED && h->param.analyse.i_subpel_refine;
 
     /* Init frames. */
+    // 👍🏻延迟的定义，和 B帧，lookahead，thread 数量有关
     if( h->param.i_bframe_adaptive == X264_B_ADAPT_TRELLIS && !h->param.rc.b_stat_read )
         h->frames.i_delay = X264_MAX(h->param.i_bframe,3)*4;
     else
@@ -1734,9 +1740,11 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
 
     CHECKED_MALLOC( h->reconfig_h, sizeof(x264_t) );
 
+    // ？？？i_thread i_lookahead_thread 是不一样的，i_lookahead_threads 肯定是 Lookahead 分析使用的，i_threads ？？？
     if( h->param.i_threads > 1 &&
         x264_threadpool_init( &h->threadpool, h->param.i_threads ) )
         goto fail;
+    // lookahead 线程池
     if( h->param.i_lookahead_threads > 1 &&
         x264_threadpool_init( &h->lookaheadpool, h->param.i_lookahead_threads ) )
         goto fail;
@@ -1753,6 +1761,7 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
     }
 #endif
 
+    // x264_t          *thread[X264_THREAD_MAX+1];
     h->thread[0] = h;
     for( int i = 1; i < h->param.i_threads + !!h->param.i_sync_lookahead; i++ )
         CHECKED_MALLOC( h->thread[i], sizeof(x264_t) );
@@ -1760,6 +1769,7 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
         for( int i = 0; i < h->param.i_lookahead_threads; i++ )
         {
             CHECKED_MALLOC( h->lookahead_thread[i], sizeof(x264_t) );
+            // x264_t          *lookahead_thread[X264_LOOKAHEAD_THREAD_MAX];
             *h->lookahead_thread[i] = *h;
         }
     *h->reconfig_h = *h;
@@ -1769,7 +1779,7 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
         int init_nal_count = h->param.i_slice_count + 3;
         int allocate_threadlocal_data = !h->param.b_sliced_threads || !i;
         if( i > 0 )
-            *h->thread[i] = *h;
+            *h->thread[i] = *h; // 线程 Context 也指向 h，不过这里是直接进行拷贝的操作，注意并不是指针
 
         if( x264_pthread_mutex_init( &h->thread[i]->mutex, NULL ) )
             goto fail;
@@ -1806,6 +1816,7 @@ x264_t *x264_encoder_open( x264_param_t *param, void *api )
         if( x264_macroblock_thread_allocate( h->thread[i], 0 ) < 0 )
             goto fail;
 
+    // rc 初始化，rc 算一个模块了
     if( x264_ratecontrol_new( h ) < 0 )
         goto fail;
 
@@ -1959,6 +1970,7 @@ int x264_encoder_reconfig( x264_t *h, x264_param_t *param )
     h->reconfig_h->param = h->param;
 
     int rc_reconfig;
+    // 拷贝参数，校验参数，好像没做其他操作
     int ret = encoder_try_reconfig( h->reconfig_h, param, &rc_reconfig );
     if( !ret )
         h->reconfig = 1;
@@ -2488,6 +2500,7 @@ static void fdec_filter_row( x264_t *h, int mb_y, int pass )
         }
 
     if( h->i_thread_frames > 1 && h->fdec->b_kept_as_ref )
+        // fdec 参考帧管理
         x264_frame_cond_broadcast( h->fdec, mb_y*16 + (b_end ? 10000 : -(X264_THREAD_HEIGHT << SLICE_MBAFF)) );
 
     if( b_measure_quality )
@@ -2749,6 +2762,7 @@ static ALWAYS_INLINE void bitstream_restore( x264_t *h, x264_bs_bak_t *bak, int 
     }
 }
 
+// 开始编码 ？？？
 static intptr_t slice_write( x264_t *h )
 {
     int i_skip;
@@ -2788,8 +2802,9 @@ static intptr_t slice_write( x264_t *h )
     h->sh.i_qp = SPEC_QP( h->sh.i_qp );
     h->sh.i_qp_delta = h->sh.i_qp - h->pps->i_pic_init_qp;
 
+    // 开始写头，里面会写 slice type 帧类型
     slice_header_write( &h->out.bs, &h->sh, h->i_nal_ref_idc );
-    if( h->param.b_cabac )
+    if( h->param.b_cabac ) // 使用 cabac
     {
         /* alignment needed */
         bs_align_1( &h->out.bs );
@@ -2805,11 +2820,12 @@ static intptr_t slice_write( x264_t *h )
     h->mb.i_last_dqp = 0;
     h->mb.field_decoding_flag = 0;
 
+    // 取长宽
     i_mb_y = h->sh.i_first_mb / h->mb.i_mb_width;
     i_mb_x = h->sh.i_first_mb % h->mb.i_mb_width;
     i_skip = 0;
 
-    while( 1 )
+    while( 1 ) // 是一个死循环
     {
         mb_xy = i_mb_x + i_mb_y * h->mb.i_mb_width;
         int mb_spos = bs_pos(&h->out.bs) + x264_cabac_pos(&h->cabac);
@@ -2818,7 +2834,7 @@ static intptr_t slice_write( x264_t *h )
         {
             if( bitstream_check_buffer( h ) )
                 return -1;
-            if( !(i_mb_y & SLICE_MBAFF) && h->param.rc.i_vbv_buffer_size )
+            if( !(i_mb_y & SLICE_MBAFF) && h->param.rc.i_vbv_buffer_size ) // vbv
                 bitstream_backup( h, &bs_bak[BS_BAK_ROW_VBV], i_skip, 1 );
             if( !h->mb.b_reencode_mb )
                 fdec_filter_row( h, i_mb_y, 0 );
@@ -2854,17 +2870,17 @@ static intptr_t slice_write( x264_t *h )
 
         /* load cache */
         if( SLICE_MBAFF )
-            x264_macroblock_cache_load_interlaced( h, i_mb_x, i_mb_y );
+            x264_macroblock_cache_load_interlaced( h, i_mb_x, i_mb_y ); // mb cache
         else
             x264_macroblock_cache_load_progressive( h, i_mb_x, i_mb_y );
 
-        x264_macroblock_analyse( h );
+        x264_macroblock_analyse( h ); // 重点来了，宏块分析
 
         /* encode this macroblock -> be careful it can change the mb type to P_SKIP if needed */
 reencode:
         x264_macroblock_encode( h );
 
-        if( h->param.b_cabac )
+        if( h->param.b_cabac ) // cabac 来了
         {
             if( mb_xy > h->sh.i_first_mb && !(SLICE_MBAFF && (i_mb_y&1)) )
                 x264_cabac_encode_terminal( &h->cabac );
@@ -2889,7 +2905,7 @@ reencode:
                     bs_write_ue( &h->out.bs, i_skip );  /* skip run */
                     i_skip = 0;
                 }
-                x264_macroblock_write_cavlc( h );
+                x264_macroblock_write_cavlc( h ); // 上一个分支是的 cabac，这里是 cavlc
                 /* If there was a CAVLC level code overflow, try again at a higher QP. */
                 if( h->mb.b_overflow )
                 {
@@ -2969,7 +2985,7 @@ cont:
         h->mb.b_reencode_mb = 0;
 
         /* save cache */
-        x264_macroblock_cache_save( h );
+        x264_macroblock_cache_save( h ); // 宏块看起来是否要缓存的
 
         if( x264_ratecontrol_mb( h, mb_size ) < 0 )
         {
@@ -3052,6 +3068,7 @@ cont:
             h->stat.frame.i_mb_field[b_intra?0:b_skip?2:1] += MB_INTERLACED;
         }
 
+        // slice_write 里包含了 deblock 步骤
         /* calculate deblock strength values (actual deblocking is done per-row along with hpel) */
         if( b_deblock )
             x264_macroblock_deblock_strength( h );
@@ -3090,6 +3107,8 @@ cont:
         bs_rbsp_trailing( &h->out.bs );
         bs_flush( &h->out.bs );
     }
+
+    // nal 结束，从而完成一个 nal 输出
     if( nal_end( h ) )
         return -1;
 
@@ -3126,6 +3145,7 @@ cont:
         }
     }
 
+    // slice_write 结束
     return 0;
 }
 
@@ -3156,6 +3176,8 @@ static void thread_sync_stat( x264_t *dst, x264_t *src )
         memcpy( &dst->stat, &src->stat, offsetof(x264_t, stat.frame) - offsetof(x264_t, stat) );
 }
 
+
+#include <unistd.h>
 static void *slices_write( x264_t *h )
 {
     int i_slice_num = 0;
@@ -3216,10 +3238,13 @@ fail:
     return (void *)-1;
 }
 
+// sliced based thread 一般是不启用的
+// x264_encoder_encode -> threaded_slices_write -> slices_write
 static int threaded_slices_write( x264_t *h )
 {
     int round_bias = h->param.i_avcintra_class ? 0 : h->param.i_slice_count/2;
 
+    // 每个线程负责的 slice 分配，多个 slice 并行
     /* set first/last mb and sync contexts */
     for( int i = 0; i < h->param.i_threads; i++ )
     {
@@ -3247,10 +3272,21 @@ static int threaded_slices_write( x264_t *h )
         h->thread[i]->b_thread_active = 1;
         x264_threadslice_cond_broadcast( h->thread[i], 0 );
     }
+
+    // 线程分发
     /* dispatch */
-    for( int i = 0; i < h->param.i_threads; i++ )
+    for( int i = 0; i < h->param.i_threads; i++ ) // 一般不会用
+        // 这里注册了多线程的函数，slices_write -> slice_write
+        // slice_write 不包含 lookahead 逻辑，也就是说 slice_write 不做帧类型决策
         x264_threadpool_run( h->threadpool, (void*)slices_write, h->thread[i] );
+    // 每个 slices_write 都等待一个信号
+
     /* wait */
+    // 应该是测试信号量是否通了？ 上面有一句`x264_threadslice_cond_broadcast( h->thread[i], 0 );`
+    // 这里 wait 1 那么里面的 while 循环就可以通过
+    // 那什么时候还需要 x264_threadslice_cond_wait 呢
+    // 除非 i_sliced_thread 开启了，都不会调用了
+    // 是不是看错了？？？这里应该是等待 slices_write 完成结束？
     for( int i = 0; i < h->param.i_threads; i++ )
         x264_threadslice_cond_wait( h->thread[i], 1 );
 
@@ -3334,8 +3370,12 @@ int     x264_encoder_encode( x264_t *h,
         return -1;
 #endif
 
+    // 切换 h，注意 h 传进来后可能变更
     if( h->i_thread_frames > 1 )
     {
+        // 如果是多线程的话，会落入这个分支
+        // printf("thread sync, switch h context\n");
+
         thread_prev    = h->thread[ h->i_thread_phase ];
         h->i_thread_phase = (h->i_thread_phase + 1) % h->i_thread_frames;
         thread_current = h->thread[ h->i_thread_phase ];
@@ -3422,12 +3462,16 @@ int     x264_encoder_encode( x264_t *h,
         if( h->frames.b_have_lowres )
             x264_frame_init_lowres( h, fenc );
 
+        // 投喂
+        // x264_lookahead_put_frame 会发起信号通知 lookahead 线程，有新的数据来了
         /* 2: Place the frame into the queue for its slice type decision */
         x264_lookahead_put_frame( h, fenc );
 
+        // 需新的投喂，***编码延时***就是这里引入的
         if( h->frames.i_input <= h->frames.i_delay + 1 - h->i_thread_frames )
         {
             /* Nothing yet to encode, waiting for filling of buffers */
+            // 经常会命中这里
             pic_out->i_type = X264_TYPE_AUTO;
             return 0;
         }
@@ -3443,14 +3487,19 @@ int     x264_encoder_encode( x264_t *h,
 
     h->i_frame++;
     /* 3: The picture is analyzed in the lookahead */
-    if( !h->frames.current[0] )
+    if( !h->frames.current[0] ) // current 看来是存储了已经确定好的帧？？？
         x264_lookahead_get_frames( h );
 
+    // lookahead 还没突出结果，没有拿到 frame，
+    // 需要外层再塞一些数据进去，才能拿到 frame？
     if( !h->frames.current[0] && x264_lookahead_is_empty( h ) )
-        return encoder_frame_end( thread_oldest, thread_current, pp_nal, pi_nal, pic_out );
+      // 很少命中这里
+      return encoder_frame_end(thread_oldest, thread_current, pp_nal, pi_nal,
+                               pic_out);
 
     /* ------------------- Get frame to be encoded ------------------------- */
     /* 4: get picture to encode */
+    // 取第一个，然后 fenc 保存
     h->fenc = x264_frame_shift( h->frames.current );
 
     /* If applicable, wait for previous frame reconstruction to finish */
@@ -3460,6 +3509,7 @@ int     x264_encoder_encode( x264_t *h,
 
     if( h->i_frame == 0 )
         h->i_reordered_pts_delay = h->fenc->i_reordered_pts;
+    // 如果 reconfg，那么重新初始化编码器？？？
     if( h->reconfig )
     {
         x264_encoder_reconfig_apply( h, &h->reconfig_h->param );
@@ -3520,7 +3570,7 @@ int     x264_encoder_encode( x264_t *h,
         i_nal_type    = NAL_SLICE_IDR;
         i_nal_ref_idc = NAL_PRIORITY_HIGHEST;
         h->sh.i_type = SLICE_TYPE_I;
-        reference_reset( h );
+        reference_reset( h ); // 重置所有的参考上下文？
         h->frames.i_poc_last_open_gop = -1;
     }
     else if( h->fenc->i_type == X264_TYPE_I )
@@ -3540,7 +3590,7 @@ int     x264_encoder_encode( x264_t *h,
         reference_hierarchy_reset( h );
         h->frames.i_poc_last_open_gop = -1;
     }
-    else if( h->fenc->i_type == X264_TYPE_BREF )
+    else if( h->fenc->i_type == X264_TYPE_BREF ) // B 帧
     {
         i_nal_type    = NAL_SLICE;
         i_nal_ref_idc = h->param.i_bframe_pyramid == X264_B_PYRAMID_STRICT ? NAL_PRIORITY_LOW : NAL_PRIORITY_HIGH;
@@ -3659,10 +3709,10 @@ int     x264_encoder_encode( x264_t *h,
         }
     }
 
-    if( h->fenc->b_keyframe )
+    if( h->fenc->b_keyframe ) // 下面都是，关键帧的处理
     {
         /* Write SPS and PPS */
-        if( h->param.b_repeat_headers )
+        if( h->param.b_repeat_headers ) // 如需，重复下发 spspps
         {
             /* generate sequence parameters */
             nal_start( h, NAL_SPS, NAL_PRIORITY_HIGHEST );
@@ -3678,7 +3728,7 @@ int     x264_encoder_encode( x264_t *h,
             nal_start( h, NAL_PPS, NAL_PRIORITY_HIGHEST );
             x264_pps_write( &h->out.bs, h->sps, h->pps );
             if( nal_end( h ) )
-                return -1;
+                return -1; // end 出错，会直接退出
             if( h->param.i_avcintra_class )
             {
                 int total_len = 256;
@@ -3701,6 +3751,8 @@ int     x264_encoder_encode( x264_t *h,
             overhead += h->out.nal[h->out.i_nal-1].i_payload + SEI_OVERHEAD;
         }
     }
+
+    // 到这里还没看到编码相关的 ？？？
 
     /* write extra sei */
     for( int i = 0; i < h->fenc->extra_sei.num_payloads; i++ )
@@ -3725,7 +3777,7 @@ int     x264_encoder_encode( x264_t *h,
         h->fenc->extra_sei.sei_free = NULL;
     }
 
-    if( h->fenc->b_keyframe )
+    if( h->fenc->b_keyframe ) // 只针对关键帧处理
     {
         /* Avid's decoder strictly wants two SEIs for AVC-Intra so we can't insert the x264 SEI */
         if( h->param.b_repeat_headers && h->fenc->i_frame == 0 && !h->param.i_avcintra_class )
@@ -3854,6 +3906,7 @@ int     x264_encoder_encode( x264_t *h,
 
     /* Init the rate control */
     /* FIXME: Include slice header bit cost. */
+    // rate control 是在 lookahead 之后了，会计算初始的 qp
     x264_ratecontrol_start( h, h->fenc->i_qpplus1, overhead*8 );
     i_global_qp = x264_ratecontrol_qp( h );
 
@@ -3884,21 +3937,39 @@ int     x264_encoder_encode( x264_t *h,
     /* Write frame */
     h->i_threadslice_start = 0;
     h->i_threadslice_end = h->mb.i_mb_height;
-    if( h->i_thread_frames > 1 )
+    // slices_write 多线程处理
+    if( h->i_thread_frames > 1 ) // 大部分的场景直接进入这里
     {
-        x264_threadpool_run( h->threadpool, (void*)slices_write, h );
+        // 并发编码设置：https://blog.csdn.net/huibailingyu/article/details/44624781
+        /////////////////////////// 看源码重点看这里
+        x264_threadpool_run( h->threadpool, (void*)slices_write, h ); // 分发其他线程处理，编码核心的入口在这里
         h->b_thread_active = 1;
     }
-    else if( h->param.b_sliced_threads )
+    else if( h->param.b_sliced_threads ) // 一般这里是不开启的，低时延 zerolatency 的时候会开启
     {
+        printf("b_sliced_threads is enabled\n");
         if( threaded_slices_write( h ) )
             return -1;
     }
     else
-        if( (intptr_t)slices_write( h ) )
+    {
+        printf("sync slices_write\n");
+        if( (intptr_t)slices_write( h ) ) // 同步处理
             return -1;
+    }
 
+    // 如果是异步线程处理的话，里面会等待线程退出
+    // 注意这里的入参是
     return encoder_frame_end( thread_oldest, thread_current, pp_nal, pi_nal, pic_out );
+}
+
+// c 语言获取毫秒
+#include <sys/time.h>
+inline uint64_t get_current_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
 static int encoder_frame_end( x264_t *h, x264_t *thread_current,
@@ -3907,12 +3978,23 @@ static int encoder_frame_end( x264_t *h, x264_t *thread_current,
 {
     char psz_message[80];
 
+    // h is thread_oldest，需要等待最老的线程执行完才能继续往下
     if( !h->param.b_sliced_threads && h->b_thread_active )
     {
+        /////////////////////////// 基本落入这里
         h->b_thread_active = 0;
-        if( (intptr_t)x264_threadpool_wait( h->threadpool, h ) )
+        if( (intptr_t)x264_threadpool_wait( h->threadpool, h ) ) // 只要 h context 下有处理完的任务，就可以正常返回
+        {
+            printf("wait error\n");
             return -1;
+        }
     }
+
+    // 编码后延时（当前帧已经编码，但后续帧还没编码，只好先退出）。
+    // 这部分延时是因为 x264 帧并行编码引起的。
+    // x264 并行帧编码每一次都是把一个帧组（i_threads个并行处理帧）处理完后，再处理下一个帧组。
+    // 这也解析了为什么即使没有 b帧，但不设置 zerolatency 时也出现了编码延迟，多线程嘛，而且帧是有时间顺序的，要等等
+    // ref: https://www.jianshu.com/p/c0cb54eb07fa
     if( !h->out.i_nal )
     {
         pic_out->i_type = X264_TYPE_AUTO;

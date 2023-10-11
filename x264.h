@@ -305,9 +305,9 @@ typedef struct x264_param_t
 {
     /* CPU flags */
     uint32_t    cpu;
-    int         i_threads;           /* encode multiple frames in parallel */
-    int         i_lookahead_threads; /* multiple threads for lookahead analysis */
-    int         b_sliced_threads;  /* Whether to use slice-based threading. */
+    int         i_threads;           /* encode multiple frames in parallel */ // 帧并行处理
+    int         i_lookahead_threads; /* multiple threads for lookahead analysis */ // 宏块并行分析
+    int         b_sliced_threads;  /* Whether to use slice-based threading. */ // 一般不使用了，除非低时延
     int         b_deterministic; /* whether to allow non-deterministic optimizations when threaded */
     int         b_cpu_independent; /* force canonical behavior rather than cpu-dependent optimal algorithms */
     int         i_sync_lookahead; /* threaded lookahead buffer */

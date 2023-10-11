@@ -27,7 +27,7 @@
 
 #include "common/common.h"
 #include "macroblock.h"
-#include "me.h"
+#include "me.h" // 涉及了运动搜索
 
 // Indexed by pic_struct values
 static const uint8_t delta_tfi_divisor[10] = { 0, 2, 1, 1, 2, 2, 3, 3, 4, 6 };
@@ -281,6 +281,7 @@ static NOINLINE unsigned int weight_cost_chroma444( x264_t *h, x264_frame_t *fen
     return cost;
 }
 
+// 非本地？？？
 void x264_weights_analyse( x264_t *h, x264_frame_t *fenc, x264_frame_t *ref, int b_lookahead )
 {
     int i_delta_index = fenc->i_frame - ref->i_frame - 1;
@@ -511,6 +512,20 @@ void x264_weights_analyse( x264_t *h, x264_frame_t *fenc, x264_frame_t *ref, int
 #define NUM_ROWS 3
 #define ROW_SATD (NUM_INTS + (h->mb.i_mb_y - h->i_threadslice_start))
 
+/*
+	对帧b的当前宏块计算其intra/inter_cost，intra/inter_aq_cost根据intra/inter_cost进行修正
+	若intra_cost<inter_cost，则判定为IMB，累计IMB个数到output_inter[INTRA_MBS]中，且令inter_cost=intra_cost
+	若当前宏块计入全帧的score中，则
+		将intra/inter_cost累加进各自的output_intra/inter[COST_EST]中
+		将intra/inter_aq_cost累加进各自的output_intra/inter[COST_AQ_EST]中
+	将intra/inter_aq_cost累加进各自所在行的output_intra/inter[ROW_SATD]中
+
+版权声明：本文为CSDN博主「JahnLiang」的原创文章，遵循CC 4.0 BY-SA版权协议，转载请附上原文出处链接及本声明。
+原文链接：https://blog.csdn.net/lj501886285/article/details/104400095
+————————————————
+slicetype_mb_cost主要作用就是统计当前mb的cost。slicetype_mb_cost 对每个参考帧（P 帧的过去，B 帧的过去和未来）执行运动搜索。 此运动搜索通常是具有子像素细化的六边形运动搜索。MB的计算
+
+*/
 static void slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
                                x264_frame_t **frames, int p0, int p1, int b,
                                int dist_scale_factor, int do_search[2], const x264_weight_t *w,
@@ -691,7 +706,7 @@ static void slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
                 }
             }
 
-            x264_me_search( h, &m[l], mvc, i_mvc );
+            x264_me_search( h, &m[l], mvc, i_mvc ); // mb cost 计算的时候，使用了运动搜索
             m[l].cost -= a->p_cost_mv[0]; // remove mvcost from skip mbs
             if( M32( m[l].mv ) )
                 m[l].cost += 5 * a->i_lambda;
@@ -811,6 +826,10 @@ typedef struct
     int *output_intra;
 } x264_slicetype_slice_t;
 
+/*
+	将slice以mb为单位计算cost
+	将结果输出到s->output_inter/s->output_intra中
+*/
 static void slicetype_slice_cost( x264_slicetype_slice_t *s )
 {
     x264_t *h = s->h;
@@ -833,6 +852,26 @@ static void slicetype_slice_cost( x264_slicetype_slice_t *s )
                                s->do_search, s->w, s->output_inter, s->output_intra );
 }
 
+/*
+简单来说，就是计算帧与帧之间的开销，特别是 b 和其他帧的开销
+帧类型决策的时候会用到；
+
+将帧b以slice为单位计算其开销，统计其总开销
+其中p0表示b的前向参考帧，p1表示b的后向参考帧
+若p0 = p1 = b,则表示没有参考帧，即I帧
+若p1 = b，则表示只有前向参考帧，即P帧
+
+作为I帧，所有宏块的cost = intra cost
+作为P帧，所有宏块的cost = min( intra cost, inter cost)
+作为B帧，所有宏块的cost = inter cost
+
+其中每一个帧都带有开销矩阵i_cost_est[b-p0][p1-b]
+表示帧b以p0为前向参考，p1为后向参考时的帧cost
+版权声明：本文为CSDN博主「JahnLiang」的原创文章，遵循CC 4.0
+BY-SA版权协议，转载请附上原文出处链接及本声明。
+原文链接：https://blog.csdn.net/lj501886285/article/details/104400095
+*/
+// static 说明只在本文件使用
 static int slicetype_frame_cost( x264_t *h, x264_mb_analysis_t *a,
                                  x264_frame_t **frames, int p0, int p1, int b )
 {
@@ -902,11 +941,12 @@ static int slicetype_frame_cost( x264_t *h, x264_mb_analysis_t *a,
             {
                 x264_slicetype_slice_t s[X264_LOOKAHEAD_THREAD_MAX];
 
+                // lookahead 多线程分工，
                 for( int i = 0; i < h->param.i_lookahead_threads; i++ )
                 {
                     x264_t *t = h->lookahead_thread[i];
 
-                    /* FIXME move this somewhere else */
+                    /* FIXME move this somewhere else */ // 填充编码参数
                     t->mb.i_me_method = h->mb.i_me_method;
                     t->mb.i_subpel_refine = h->mb.i_subpel_refine;
                     t->mb.b_chroma_me = h->mb.b_chroma_me;
@@ -923,16 +963,19 @@ static int slicetype_frame_cost( x264_t *h, x264_mb_analysis_t *a,
                     memset( output_intra[i], 0, thread_output_size * sizeof(int) );
                     output_inter[i][NUM_ROWS] = output_intra[i][NUM_ROWS] = thread_height;
 
+                    // update next loop
                     output_inter[i+1] = output_inter[i] + thread_output_size + PAD_SIZE;
                     output_intra[i+1] = output_intra[i] + thread_output_size + PAD_SIZE;
 
+                    // lookahead 线程任务分发
                     x264_threadpool_run( h->lookaheadpool, (void*)slicetype_slice_cost, &s[i] );
                 }
+                // 会等待所有的 lookahead 线程结束
                 for( int i = 0; i < h->param.i_lookahead_threads; i++ )
                     x264_threadpool_wait( h->lookaheadpool, &s[i] );
             }
             else
-            {
+            { // 单线程处理，slicetype_slice_cost 在本线程执行
                 h->i_threadslice_start = 0;
                 h->i_threadslice_end = h->mb.i_mb_height;
                 memset( output_inter[0], 0, (output_buf_size - PAD_SIZE) * sizeof(int) );
@@ -943,6 +986,7 @@ static int slicetype_frame_cost( x264_t *h, x264_mb_analysis_t *a,
                 slicetype_slice_cost( &s );
             }
 
+            // 残差相加
             /* Sum up accumulators */
             if( b == p1 )
                 fenc->i_intra_mbs[b-p0] = 0;
@@ -1414,6 +1458,7 @@ static int scenecut_internal( x264_t *h, x264_mb_analysis_t *a, x264_frame_t **f
                  / ( h->param.i_keyint_max - h->param.i_keyint_min );
     }
 
+    // 根据 icost 决定是否要进行场景切割
     res = pcost >= (1.0 - f_bias) * icost;
     if( res && real_scenecut )
     {
@@ -1470,10 +1515,12 @@ static int scenecut( x264_t *h, x264_mb_analysis_t *a, x264_frame_t **frames, in
 #define IS_X264_TYPE_AUTO_OR_I(x) ((x)==X264_TYPE_AUTO || IS_X264_TYPE_I(x))
 #define IS_X264_TYPE_AUTO_OR_B(x) ((x)==X264_TYPE_AUTO || IS_X264_TYPE_B(x))
 
+// lookahead 阶段调用：帧类型决策
 void x264_slicetype_analyse( x264_t *h, int intra_minigop )
 {
     x264_mb_analysis_t a;
-    x264_frame_t *frames[X264_LOOKAHEAD_MAX+3] = { NULL, };
+    // lookahead 队列最多 250+3
+    x264_frame_t *frames[X264_LOOKAHEAD_MAX+3] = { NULL, }; // 注意是一个指针数组
     int num_frames, orig_num_frames, keyint_limit, framecnt;
     int i_max_search = X264_MIN( h->lookahead->next.i_size, X264_LOOKAHEAD_MAX );
     int b_vbv_lookahead = h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead;
@@ -1489,19 +1536,24 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
 
     if( !h->lookahead->last_nonb )
         return;
+    // 第一个位置预留给 nonb，nonb 干啥的？
     frames[0] = h->lookahead->last_nonb;
+
+    // frames 是一个临时变量，从 next.list 中拷贝到临时队列里面
     for( framecnt = 0; framecnt < i_max_search; framecnt++ )
         frames[framecnt+1] = h->lookahead->next.list[framecnt];
 
     lowres_context_init( h, &a );
 
+    // 如果没有需要分析的帧，那么直接分析
     if( !framecnt )
     {
-        if( h->param.rc.b_mb_tree )
+        if( h->param.rc.b_mb_tree ) // 既然没有帧，为什么还需要 mb 呢？？？
             macroblock_tree( h, &a, frames, 0, keyframe );
         return;
     }
 
+    // keyint keymax 对帧分析有影响
     keyint_limit = h->param.i_keyint_max - frames[0]->i_frame + h->lookahead->i_last_keyframe - 1;
     orig_num_frames = num_frames = h->param.b_intra_refresh ? framecnt : X264_MIN( framecnt, keyint_limit );
 
@@ -1515,6 +1567,7 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
         num_frames++;
     else if( num_frames == 0 )
     {
+        // 如果没有需要分析的，直接把第一个置为 I帧？？？
         frames[1]->i_type = X264_TYPE_I;
         return;
     }
@@ -1522,6 +1575,7 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
     if( IS_X264_TYPE_AUTO_OR_I( frames[1]->i_type ) &&
         h->param.i_scenecut_threshold && scenecut( h, &a, frames, 0, 1, 1, orig_num_frames, i_max_search ) )
     {
+        // 需要进行场景切换，直接把第一帧作为 I帧直接返回
         if( frames[1]->i_type == X264_TYPE_AUTO )
             frames[1]->i_type = X264_TYPE_I;
         return;
@@ -1534,6 +1588,8 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
     /* Replace forced keyframes with I/IDR-frames */
     for( int j = 1; j <= num_frames; j++ )
     {
+        // 作为GOP的两种结构，ClosedGOP是指帧间的预测都是在GOP中进行的，而对于OpenGOP来说，一个GOP里面的某一帧在解码时要依赖于相邻GOP中的某一些帧。
+        // 所以这里如果开启了 opengop，那么不需要 IDR 帧了
         if( frames[j]->i_type == X264_TYPE_KEYFRAME )
             frames[j]->i_type = h->param.b_open_gop ? X264_TYPE_I : X264_TYPE_IDR;
     }
@@ -1541,6 +1597,7 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
     /* Close GOP at IDR-frames */
     for( int j = 2; j <= num_frames; j++ )
     {
+        // 前一个帧置为 P 帧
         if( frames[j]->i_type == X264_TYPE_IDR && IS_X264_TYPE_AUTO_OR_B( frames[j-1]->i_type ) )
             frames[j-1]->i_type = X264_TYPE_P;
     }
@@ -1548,8 +1605,12 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
     int num_analysed_frames = num_frames;
     int reset_start;
 
+    // /* i_bframe how many b-frame between 2 references pictures */
+    // 如果启用的 B帧，那么情况会复杂很多
     if( h->param.i_bframe )
     {
+        // 根据不同的 B帧策略，分析的策略不一样。应该和搜索的策略有关
+        // 0=X264_B_ADAPT_NONE（总是使用B帧）， 1=X264_B_ADAPT_FAST（快速算法），2=X264_B_ADAPT_TRELLIS（最佳算法），
         if( h->param.i_bframe_adaptive == X264_B_ADAPT_TRELLIS )
         {
             if( num_frames > 1 )
@@ -1558,6 +1619,15 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
                 int best_path_index = num_frames % (X264_BFRAME_MAX+1);
 
                 /* Perform the frametype analysis. */
+                // IBBBBBBBBBBBBBBBBBBBBBP 决策，结果存储在 best_paths 里面
+                // 函数主要的步骤如下：
+                // 初始化两个路径数组paths和best_paths，并设置最佳路径的代价为最大值。
+                // 遍历所有当前可能的路径。
+                // 为当前路径添加后缀，形成完整的路径。
+                // 对于每个可能的路径，进行后续的操作。
+                // 在后续的操作中，根据算法要求进行字符串操作，计算路径的代价。
+                // 更新最佳路径和最佳代价。
+
                 for( int j = 2; j <= num_frames; j++ )
                     slicetype_path( h, &a, frames, j, best_paths );
 
@@ -1666,19 +1736,21 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
     }
     else
     {
+        // 不需要B帧，那么直接赋值为 P帧，直接一个循环搞定
         for( int j = 1; j <= num_frames; j++ )
             if( IS_X264_TYPE_AUTO_OR_B( frames[j]->i_type ) )
                 frames[j]->i_type = X264_TYPE_P;
         reset_start = !keyframe + 1;
     }
 
-    /* Perform the actual macroblock tree analysis.
+    /* Perform the actual macroblock tree analysis. 执行实际的宏块树分析。
      * Don't go farther than the maximum keyframe interval; this helps in short GOPs. */
+    // 宏块分析开始了，就是计算继承率和遗传率，在码率控制 rate control 中非常重要
     if( h->param.rc.b_mb_tree )
         macroblock_tree( h, &a, frames, X264_MIN(num_frames, h->param.i_keyint_max), keyframe );
 
     /* Enforce keyframe limit. */
-    if( !h->param.b_intra_refresh )
+    if( !h->param.b_intra_refresh ) // intra refresh
     {
         int last_keyframe = h->lookahead->i_last_keyframe;
         int last_possible = 0;
@@ -1730,6 +1802,7 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
         }
     }
 
+    // vbv 也会影响帧分析
     if( b_vbv_lookahead )
         vbv_lookahead( h, &a, frames, num_frames, keyframe );
 
@@ -1740,8 +1813,10 @@ void x264_slicetype_analyse( x264_t *h, int intra_minigop )
 #if HAVE_OPENCL
     x264_opencl_slicetype_end( h );
 #endif
+    // 终于结束分析
 }
 
+// lookahead 阶段调用
 void x264_slicetype_decide( x264_t *h )
 {
     x264_frame_t *frames[X264_BFRAME_MAX+2];
@@ -1896,7 +1971,7 @@ void x264_slicetype_decide( x264_t *h )
     }
 
     /* calculate the frame costs ahead of time for x264_rc_analyse_slice while we still have lowres */
-    if( h->param.rc.i_rc_method != X264_RC_CQP )
+    if( h->param.rc.i_rc_method != X264_RC_CQP ) // 如果不是 cqp 的话，那么需要一个合适的 qp，怎么确定当前值合适的 qp 是多少呢
     {
         x264_mb_analysis_t a;
         int p0, p1, b;
@@ -1973,6 +2048,8 @@ void x264_slicetype_decide( x264_t *h )
     }
 }
 
+// rate control 相关
+// rcc->last_satd = x264_rc_analyse_slice(h);
 int x264_rc_analyse_slice( x264_t *h )
 {
     int p0 = 0, p1, b;
@@ -1992,9 +2069,11 @@ int x264_rc_analyse_slice( x264_t *h )
     x264_frame_t **frames = &h->fenc - b;
 
     /* cost should have been already calculated by x264_slicetype_decide */
+    // lookahead 里面已经计算过
     cost = frames[b]->i_cost_est[b-p0][p1-b];
     assert( cost >= 0 );
 
+    // 如果开启了 mb tree，那么需要重新计算 cost
     if( h->param.rc.b_mb_tree && !h->param.rc.b_stat_read )
     {
         cost = slicetype_frame_cost_recalculate( h, frames, p0, p1, b );
@@ -2027,6 +2106,7 @@ int x264_rc_analyse_slice( x264_t *h )
                     h->fdec->i_row_satd[y] += (diff * frames[b]->i_inv_qscale_factor[mb_xy] + 128) >> 8;
                 else
                     h->fdec->i_row_satd[y] += diff;
+
                 cost += diff;
             }
         }

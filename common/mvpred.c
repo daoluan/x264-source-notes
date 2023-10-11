@@ -27,6 +27,8 @@
 
 #include "common.h"
 
+// mvp 预测，运动向量预测
+
 void x264_mb_predict_mv( x264_t *h, int i_list, int idx, int i_width, int16_t mvp[2] )
 {
     const int i8 = x264_scan8[idx];

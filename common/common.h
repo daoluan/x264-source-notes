@@ -198,7 +198,7 @@ typedef struct
     {
         int i_difference_of_pic_nums;
         int i_poc;
-    } mmco[X264_REF_MAX];
+    } mmco[X264_REF_MAX]; // 参考帧相关
 
     int i_cabac_init_idc;
 
@@ -223,9 +223,9 @@ typedef struct x264_lookahead_t
     int                           i_slicetype_length;
     x264_frame_t                  *last_nonb;
     x264_pthread_t                thread_handle;
-    x264_sync_frame_list_t        ifbuf;
+    x264_sync_frame_list_t        ifbuf; // in frame buffer
     x264_sync_frame_list_t        next;
-    x264_sync_frame_list_t        ofbuf;
+    x264_sync_frame_list_t        ofbuf; // out frame buffer
 } x264_lookahead_t;
 
 typedef struct x264_ratecontrol_t   x264_ratecontrol_t;
@@ -282,6 +282,7 @@ struct x264_t
     int             i_threadslice_start; /* first row in this thread slice */
     int             i_threadslice_end; /* row after the end of this thread slice */
     int             i_threadslice_pass; /* which pass of encoding we are on */
+    // 两个线程池
     x264_threadpool_t *threadpool;
     x264_threadpool_t *lookaheadpool;
     x264_pthread_mutex_t mutex;
@@ -408,7 +409,7 @@ struct x264_t
     } frames;
 
     /* current frame being encoded */
-    x264_frame_t    *fenc;
+    x264_frame_t    *fenc; // 正在被编码的帧
 
     /* frame being reconstructed */
     x264_frame_t    *fdec;
@@ -434,6 +435,7 @@ struct x264_t
         ALIGNED_64( dctcoef luma4x4[16*3][16] );
     } dct;
 
+    // 正在处理的当前宏块
     /* MB table and cache for current frame/mb */
     struct
     {

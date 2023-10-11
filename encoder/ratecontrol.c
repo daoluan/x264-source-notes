@@ -1428,6 +1428,7 @@ void x264_ratecontrol_zone_init( x264_t *h )
 }
 
 /* Before encoding a frame, choose a QP for it */
+// 选择合适的 qp，依赖 lookahead 计算的结果
 void x264_ratecontrol_start( x264_t *h, int i_force_qp, int overhead )
 {
     x264_ratecontrol_t *rc = h->rc;
@@ -1582,6 +1583,7 @@ static float predict_row_size_to_end( x264_t *h, int y, float qp )
     return bits;
 }
 
+// 宏块码控？
 /* TODO:
  *  eliminate all use of qp in row ratecontrol: make it entirely qscale-based.
  *  make this function stop being needlessly O(N^2)
@@ -1600,8 +1602,12 @@ int x264_ratecontrol_mb( x264_t *h, int bits )
     x264_emms();
     rc->qpa_rc += rc->qpm * h->mb.i_mb_width;
 
+    // 如果没开启 vbv 的话，直接退出，看来下面的逻辑和 vbv 相关
     if( !rc->b_vbv )
+    {
+        // printf("vbv not enabled break\n"); // 用 ./x264  -o test/test.yuv ./test/test_1280x720.mp4 测试，这里可以命中
         return 0;
+    }
 
     float qscale = qp2qscale( rc->qpm );
     h->fdec->f_row_qp[y] = rc->qpm;
@@ -1669,6 +1675,7 @@ int x264_ratecontrol_mb( x264_t *h, int bits )
         if( h->sh.i_type != SLICE_TYPE_I )
             rc_tol *= 0.5f;
 
+        // 和 vbv 相关
         if( !rc->b_vbv_min_rate )
             qp_min = X264_MAX( qp_min, rc->qp_novbv );
 
@@ -1740,6 +1747,7 @@ int x264_ratecontrol_mb( x264_t *h, int bits )
     return 0;
 }
 
+//  x264_macroblock_analyse -> x264_ratecontrol_qp
 int x264_ratecontrol_qp( x264_t *h )
 {
     x264_emms();
@@ -1749,8 +1757,8 @@ int x264_ratecontrol_qp( x264_t *h )
 int x264_ratecontrol_mb_qp( x264_t *h )
 {
     x264_emms();
-    float qp = h->rc->qpm;
-    if( h->param.rc.i_aq_mode )
+    float qp = h->rc->qpm; // /* qp for current macroblock: precise float for AQ */
+    if( h->param.rc.i_aq_mode ) // "aq"代表"Adaptive Quantization"（自适应量化）
     {
          /* MB-tree currently doesn't adjust quantizers in unreferenced frames. */
         float qp_offset = h->fdec->b_kept_as_ref ? h->fenc->f_qp_offset[h->mb.i_mb_xy] : h->fenc->f_qp_offset_aq[h->mb.i_mb_xy];
@@ -1784,6 +1792,7 @@ int x264_ratecontrol_slice_type( x264_t *h, int frame_num )
             if( h->param.i_bframe_adaptive )
                 x264_log( h, X264_LOG_ERROR, "disabling adaptive B-frames\n" );
 
+            // 每个线程，都记录自己的 context（param）
             for( int i = 0; i < h->param.i_threads; i++ )
             {
                 h->thread[i]->rc->b_abr = 0;

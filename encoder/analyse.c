@@ -72,7 +72,7 @@ typedef struct
     int b_try_skip;
 
     /* Luma part */
-    int i_satd_i16x16;
+    int i_satd_i16x16; // 不同大小的宏块，都需要做“模式决策”
     int i_satd_i16x16_dir[7];
     int i_predict16x16;
 
@@ -255,6 +255,8 @@ static void mb_analyse_load_costs( x264_t *h, x264_mb_analysis_t *a )
 static void mb_analyse_init_qp( x264_t *h, x264_mb_analysis_t *a, int qp )
 {
     int effective_chroma_qp = h->chroma_qp_table[SPEC_QP(qp)] + X264_MAX( qp - QP_MAX_SPEC, 0 );
+    /* lambda = pow(2,qp/6-2) */
+    // qp 和 lambda 可以换算，这里用 table 计算好结果，用 qp 作为下标取值
     a->i_lambda = x264_lambda_tab[qp];
     a->i_lambda2 = x264_lambda2_tab[qp];
 
@@ -291,6 +293,7 @@ static void mb_analyse_init_qp( x264_t *h, x264_mb_analysis_t *a, int qp )
     h->mb.i_chroma_qp = h->chroma_qp_table[qp];
 }
 
+// slice_write -> x264_macroblock_analyse -> mb_analyse_init -> 等待前面的帧完成，等待前面的行完成
 static void mb_analyse_init( x264_t *h, x264_mb_analysis_t *a, int qp )
 {
     int subme = h->param.analyse.i_subpel_refine - (h->sh.i_type == SLICE_TYPE_B);
@@ -298,6 +301,8 @@ static void mb_analyse_init( x264_t *h, x264_mb_analysis_t *a, int qp )
     /* mbrd == 1 -> RD mode decision */
     /* mbrd == 2 -> RD refinement */
     /* mbrd == 3 -> QPRD */
+    // mbrd ***macro block Rate-Distortion***
+    // 如果都是 true 的话， 就是 mbrd == 3，QPRD
     a->i_mbrd = (subme>=6) + (subme>=8) + (h->param.analyse.i_subpel_refine>=10);
     h->mb.b_deblock_rdo = h->param.analyse.i_subpel_refine >= 9 && h->sh.i_disable_deblocking_filter_idc != 1;
     a->b_early_terminate = h->param.analyse.i_subpel_refine < 11;
@@ -324,7 +329,7 @@ static void mb_analyse_init( x264_t *h, x264_mb_analysis_t *a, int qp )
         a->i_mbrd ? 2 :
         !h->param.analyse.i_trellis && !h->param.analyse.i_noise_reduction;
 
-    /* II: Inter part P/B frame */
+    /* II: Inter part P/B frame */ // PB帧，才会进入，I帧的话，直接跳过，退出函数
     if( h->sh.i_type != SLICE_TYPE_I )
     {
         int i_fmv_range = 4 * h->param.analyse.i_mv_range;
@@ -352,6 +357,7 @@ static void mb_analyse_init( x264_t *h, x264_mb_analysis_t *a, int qp )
             int mb_y = h->mb.i_mb_y >> SLICE_MBAFF;
             int thread_mvy_range = i_fmv_range;
 
+            // 如果多线程的话，才会进入
             if( h->i_thread_frames > 1 )
             {
                 int pix_y = (h->mb.i_mb_y | PARAM_INTERLACED) * 16;
@@ -359,6 +365,9 @@ static void mb_analyse_init( x264_t *h, x264_mb_analysis_t *a, int qp )
                 for( int i = (h->sh.i_type == SLICE_TYPE_B); i >= 0; i-- )
                     for( int j = 0; j < h->i_ref[i]; j++ )
                     {
+                        // 行并行
+                        // mb_analyse_init 函数里面等待前面帧对应的行完成
+                        // x264_frame_cond_wait 只在很少的地方使用，理解帧并行分析很重要的线索
                         int completed = x264_frame_cond_wait( h->fref[i][j]->orig, thresh );
                         thread_mvy_range = X264_MIN( thread_mvy_range, completed - pix_y );
                     }
@@ -1106,7 +1115,7 @@ static void intra_rd_refine( x264_t *h, x264_mb_analysis_t *a )
                 int i_mode = *predict_mode;
                 i_satd = rd_cost_i4x4( h, a->i_lambda2, idx, i_mode );
 
-                if( i_best > i_satd )
+                if( i_best > i_satd ) // best 还更大一些
                 {
                     a->i_predict4x4[idx] = i_mode;
                     i_best = i_satd;
@@ -1167,7 +1176,7 @@ static void intra_rd_refine( x264_t *h, x264_mb_analysis_t *a )
 
                 if( i_best > i_satd )
                 {
-                    a->i_predict8x8[idx] = i_mode;
+                    a->i_predict8x8[idx] = i_mode; // 更新 i_mode
                     cbp_luma_new = h->mb.i_cbp_luma;
                     i_best = i_satd;
 
@@ -2800,6 +2809,11 @@ static inline void mb_analyse_transform_rd( x264_t *h, x264_mb_analysis_t *a, in
     }
 }
 
+// qp 调优
+// RDO 核心计算过程，在这个过程里面，qp 值会不断调整
+// 可以看到一个入参结构体，x264_mb_analysis_t 是基于宏块的
+// 一开始以为 rdo 的核心都在`rdo.c`里面
+// analysis.i_mbrd == 3 才会开启
 /* Rate-distortion optimal QP selection.
  * FIXME: More than half of the benefit of this function seems to be
  * in the way it improves the coding of chroma DC (by decimating or
@@ -2807,15 +2821,18 @@ static inline void mb_analyse_transform_rd( x264_t *h, x264_mb_analysis_t *a, in
  * There must be a more efficient way to get that portion of the benefit
  * without doing full QP-RD, but RD-decimation doesn't seem to do the
  * trick. */
-static inline void mb_analyse_qp_rd( x264_t *h, x264_mb_analysis_t *a )
+static inline void mb_analyse_qp_rd( x264_t *h, x264_mb_analysis_t *a ) // RDO 选择QP
 {
+    // RDO 选择QP
     int bcost, cost, failures, prevcost, origcost;
-    int orig_qp = h->mb.i_qp, bqp = h->mb.i_qp;
+    int orig_qp = h->mb.i_qp, bqp = h->mb.i_qp; // ？？？h->mb.i_qp 什么时候赋值的
     int last_qp_tried = 0;
     origcost = bcost = rd_cost_mb( h, a->i_lambda2 );
     int origcbp = h->mb.cbp[h->mb.i_mb_xy];
 
-    /* If CBP is already zero, don't raise the quantizer any higher. */
+    /* If CBP is already zero, don't raise the quantizer any higher. */ // CPB 已经为 0，不要再提高 qp，也就是保留更多的细节
+    // direction 表示调整的方向，以及步长。往两个方向调整 qp，一个方向是往大了调整，一个方向是往小了调整
+    // cbp用于表示当前宏块是否存在非零值
     for( int direction = origcbp ? 1 : -1; direction >= -1; direction-=2 )
     {
         /* Without psy-RD, require monotonicity when moving quant away from previous
@@ -2859,8 +2876,9 @@ static inline void mb_analyse_qp_rd( x264_t *h, x264_mb_analysis_t *a )
             }
         }
 
-        h->mb.i_qp += direction;
-        while( h->mb.i_qp >= h->param.rc.i_qp_min && h->mb.i_qp <= SPEC_QP( h->param.rc.i_qp_max ) )
+        // 核心的 qp 尝试的逻辑在这里
+        h->mb.i_qp += direction; // 根据 direction 调整 mb qp
+        while( h->mb.i_qp >= h->param.rc.i_qp_min && h->mb.i_qp <= SPEC_QP( h->param.rc.i_qp_max ) ) // 在 min max 范围内，
         {
             if( h->mb.i_last_qp == h->mb.i_qp )
                 last_qp_tried = 1;
@@ -2869,8 +2887,16 @@ static inline void mb_analyse_qp_rd( x264_t *h, x264_mb_analysis_t *a )
             else
             {
                 h->mb.i_chroma_qp = h->chroma_qp_table[h->mb.i_qp];
+                // 里面会调用 x264_macroblock_encode，完成了DCT变换和量化两个步骤。
+                // =====
+                // x264_macroblock_encode_skip()：编码Skip类型宏块。
+                // x264_mb_encode_i16x16()：编码Intra16x16类型的宏块。该函数除了进行DCT变换之外，还对16个小块的DC系数进行了Hadamard变换。
+                // x264_mb_encode_i4x4()：编码Intra4x4类型的宏块。
+                // 帧间宏块编码：这一部分代码直接写在了函数体里面。
+                // x264_mb_encode_chroma()：编码色度块。
+                // 参考：https://blog.csdn.net/leixiaohua1020/article/details/45938927
                 cost = rd_cost_mb( h, a->i_lambda2 );
-                COPY2_IF_LT( bcost, cost, bqp, h->mb.i_qp );
+                COPY2_IF_LT( bcost, cost, bqp, h->mb.i_qp ); // 更新 qp，如果得出的参数更优的话
             }
 
             /* We can't assume that the costs are monotonic over QPs.
@@ -2881,11 +2907,11 @@ static inline void mb_analyse_qp_rd( x264_t *h, x264_mb_analysis_t *a )
                 failures++;
             prevcost = cost;
 
-            if( failures > threshold )
+            if( failures > threshold ) // 退出条件，如果尝试后没有得出更优的参数，那么 break
                 break;
             if( direction == 1 && !h->mb.cbp[h->mb.i_mb_xy] )
                 break;
-            h->mb.i_qp += direction;
+            h->mb.i_qp += direction; // 继续更新 qp，while 循环继续
         }
     }
 
@@ -2901,6 +2927,7 @@ static inline void mb_analyse_qp_rd( x264_t *h, x264_mb_analysis_t *a )
     h->mb.i_qp = bqp;
     h->mb.i_chroma_qp = h->chroma_qp_table[h->mb.i_qp];
 
+    // ref // rdo 中有个for 循环，意思是qp调整方向，是往大了调整，还是往小了调整，如果cbp全为0，表示没有残差了，就调小点，保留细节，如果cbp不为0就调大一点，尝试节省一些码率。
     /* Check transform again; decision from before may no longer be optimal. */
     if( h->mb.i_qp != orig_qp && h->param.analyse.b_transform_8x8 &&
         x264_mb_transform_8x8_allowed( h ) )
@@ -2915,12 +2942,30 @@ static inline void mb_analyse_qp_rd( x264_t *h, x264_mb_analysis_t *a )
 /*****************************************************************************
  * x264_macroblock_analyse:
  *****************************************************************************/
+// 函数的主要步骤如下：
+
+// 初始化宏块分析的上下文（x264_mb_analysis_t结构体）和初始的代价（i_cost）。
+// 根据编码器的设置，确定当前宏块的量化参数（QP）。
+// 如果启用了自适应量化模式（AQ mode）并且细粒度亚像素优化（subpel refine）小于10，根据前一个宏块的QP和当前宏块的QP的差值确定最终的QP。
+// 如果启用了宏块信息（mb_info），将实际的分析QP存储到effective_qp数组中。
+// 初始化宏块分析的相关数据结构。
+// 根据当前帧的类型（I帧或P帧），进行相应的宏块分析。
+// 如果启用了多帧参考决策（mbrd），初始化参考帧缓存。
+// 对于I帧，进行帧内宏块分析。
+// 如果启用了多帧参考决策，并且当前帧类型不是直接模式（B_DIRECT）和跳过模式（B_SKIP），进行后续的操作。
+// 根据当前帧类型和宏块类型，进行宏块的亚像素优化和代价计算。
+// 根据分析后的代价，进行决策，如选择最佳的亚像素分辨率等。
+// 完成宏块分析。
+//
+// 其中包含，rdo 计算
+// slice_write -> x264_macroblock_analyse -> x264_macroblock_encode
 void x264_macroblock_analyse( x264_t *h )
 {
     x264_mb_analysis_t analysis;
     int i_cost = COST_MAX;
 
-    h->mb.i_qp = x264_ratecontrol_mb_qp( h );
+    // 初始
+    h->mb.i_qp = x264_ratecontrol_mb_qp( h ); // mb 和 rc 是关联的，rc 离不开 mb 分析，mb 分析其实就是 qp 的分配
     /* If the QP of this MB is within 1 of the previous MB, code the same QP as the previous MB,
      * to lower the bit cost of the qp_delta.  Don't do this if QPRD is enabled. */
     if( h->param.rc.i_aq_mode && h->param.analyse.i_subpel_refine < 10 )
@@ -2931,7 +2976,7 @@ void x264_macroblock_analyse( x264_t *h )
     mb_analyse_init( h, &analysis, h->mb.i_qp );
 
     /*--------------------------- Do the analysis ---------------------------*/
-    if( h->sh.i_type == SLICE_TYPE_I )
+    if( h->sh.i_type == SLICE_TYPE_I ) // I 帧分支
     {
 intra_analysis:
         if( analysis.i_mbrd )
@@ -2947,7 +2992,7 @@ intra_analysis:
         if( analysis.i_satd_pcm < i_cost )
             h->mb.i_type = I_PCM;
 
-        else if( analysis.i_mbrd >= 2 )
+        else if( analysis.i_mbrd >= 2 ) // 所以 mbrd 越大，计算量越大
             intra_rd_refine( h, &analysis );
     }
     else if( h->sh.i_type == SLICE_TYPE_P )
@@ -3243,6 +3288,7 @@ skip_analysis:
                 goto intra_analysis;
             }
 
+            // rd refine
             if( analysis.i_mbrd >= 2 && h->mb.i_type != I_PCM )
             {
                 if( IS_INTRA( h->mb.i_type ) )
@@ -3302,7 +3348,7 @@ skip_analysis:
             }
         }
     }
-    else if( h->sh.i_type == SLICE_TYPE_B )
+    else if( h->sh.i_type == SLICE_TYPE_B ) // P 帧和 B 帧的处理分支不一样
     {
         int i_bskip_cost = COST_MAX;
         int b_skip = 0;
@@ -3718,8 +3764,11 @@ skip_analysis:
     if( !analysis.i_mbrd )
         mb_analyse_transform( h );
 
-    if( analysis.i_mbrd == 3 && !IS_SKIP(h->mb.i_type) )
+    if( analysis.i_mbrd == 3 && !IS_SKIP(h->mb.i_type) ) // 如果不是skip 宏块，则做 rdo，mbrd=3 才会开启，说明到这里的话，计算量会非常大
+    {
+        // printf("mbrd == 3 is enabled\n"); // ./x264  -o test/test.yuv ./test/test_1280x720.mp4 默认是否不启用的
         mb_analyse_qp_rd( h, &analysis );
+    }
 
     h->mb.b_trellis = h->param.analyse.i_trellis;
     h->mb.b_noise_reduction = h->mb.b_noise_reduction || (!!h->param.analyse.i_noise_reduction && !IS_INTRA( h->mb.i_type ));

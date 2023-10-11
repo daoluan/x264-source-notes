@@ -45,12 +45,17 @@ struct x264_threadpool_t
     x264_sync_frame_list_t done;   /* list of jobs that have finished processing */
 };
 
+// 多线程入口
+// 这才是多线程的入口，好奇是怎么串起来的 ？？？
+// 其他线程，可以投递任务，这里处理
 REALIGN_STACK static void *threadpool_thread( x264_threadpool_t *pool )
 {
     while( !pool->exit )
     {
+        // if (pool->run.i_size >0) printf("pool size %d\n", pool->run.i_size);
         x264_threadpool_job_t *job = NULL;
         x264_pthread_mutex_lock( &pool->run.mutex );
+        // 队列空了，等
         while( !pool->exit && !pool->run.i_size )
             x264_pthread_cond_wait( &pool->run.cv_fill, &pool->run.mutex );
         if( pool->run.i_size )
@@ -59,10 +64,10 @@ REALIGN_STACK static void *threadpool_thread( x264_threadpool_t *pool )
             pool->run.i_size--;
         }
         x264_pthread_mutex_unlock( &pool->run.mutex );
-        if( !job )
+        if( !job ) // 没有拿到 job 循环继续
             continue;
         job->ret = job->func( job->arg );
-        x264_sync_frame_list_push( &pool->done, (void*)job );
+        x264_sync_frame_list_push( &pool->done, (void*)job ); // 把结果放到 done 队列里，结果应该被写到文件或者写入网络，总之是业务层的事情啦
     }
     return NULL;
 }
@@ -88,12 +93,14 @@ int x264_threadpool_init( x264_threadpool_t **p_pool, int threads )
         x264_sync_frame_list_init( &pool->done, pool->threads ) )
         goto fail;
 
+    // 有多少的 threads 就会放多少个 job，这些 job 具体要做什么，具体由 x264_threadpool_run 来指定
     for( int i = 0; i < pool->threads; i++ )
     {
        x264_threadpool_job_t *job;
        CHECKED_MALLOC( job, sizeof(x264_threadpool_job_t) );
        x264_sync_frame_list_push( &pool->uninit, (void*)job );
     }
+    // 线程池是在这里起来的，比如 slices_write 任务，就是分发给这些起来的线程去执行
     for( int i = 0; i < pool->threads; i++ )
         if( x264_pthread_create( pool->thread_handle+i, NULL, (void*)threadpool_thread, pool ) )
             goto fail;
@@ -105,9 +112,18 @@ fail:
 
 void x264_threadpool_run( x264_threadpool_t *pool, void *(*func)(void *), void *arg )
 {
+    // job 从队列里面取出来， 不是新建
+    // 一开始，实在是没看懂：
+    // x264_sync_frame_list_pop 返回的是 x264_frame_t* 类型，但这里却用 x264_threadpool_job_t* 来接
+    // 实际上，这里复用 x264_sync_frame_list_xxx 里面定义的入队，出队等逻辑，入队的不一定是 frame，也可以是 job
+    // 甚至可以其他任何指针，只要有队列的需求，都可以用这一套 API
+
+    // uninint -> run
     x264_threadpool_job_t *job = (void*)x264_sync_frame_list_pop( &pool->uninit );
+    // 赋值 job 函数和参数
     job->func = func;
     job->arg  = arg;
+
     x264_sync_frame_list_push( &pool->run, (void*)job );
 }
 
@@ -124,10 +140,13 @@ void *x264_threadpool_wait( x264_threadpool_t *pool, void *arg )
                 x264_pthread_mutex_unlock( &pool->done.mutex );
 
                 void *ret = job->ret;
+                // ？？？为什么有从 done 里面放到 uninit 里面
+                // done -> uninit
                 x264_sync_frame_list_push( &pool->uninit, (void*)job );
                 return ret;
             }
 
+        //  信号量等待，等待任务结束
         x264_pthread_cond_wait( &pool->done.cv_fill, &pool->done.mutex );
     }
 }

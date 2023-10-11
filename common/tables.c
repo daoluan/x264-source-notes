@@ -26,6 +26,7 @@
 
 #include "base.h"
 
+// idc-levcl 对应 webrtc sdp 里面 profile-level-id 最后两个十六进制数
 const x264_level_t x264_levels[] =
 {
     { 10,     1485,     99,    396,     64,    175,   64, 64,  0, 2, 0, 0, 1 },
