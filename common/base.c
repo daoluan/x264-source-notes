@@ -731,6 +731,12 @@ REALIGN_STACK void x264_param_apply_fastfirstpass( x264_param_t *param )
 
 static int profile_string_to_int( const char *str )
 {
+    // PROFILE_BASELINE = 66,
+    // PROFILE_MAIN     = 77,
+    // PROFILE_HIGH    = 100,
+    // PROFILE_HIGH10  = 110,
+    // PROFILE_HIGH422 = 122,
+    // PROFILE_HIGH444_PREDICTIVE = 244,
     if( !strcasecmp( str, "baseline" ) )
         return PROFILE_BASELINE;
     if( !strcasecmp( str, "main" ) )
@@ -951,6 +957,7 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
                 errortype = X264_PARAM_ALLOC_FAILED;
         }
     }
+    // 线程相关
     OPT("threads")
     {
         if( !strcasecmp(value, "auto") )
@@ -958,6 +965,7 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         else
             p->i_threads = atoi(value);
     }
+    // 预分析线程数量
     OPT("lookahead-threads")
     {
         if( !strcasecmp(value, "auto") )
@@ -965,8 +973,10 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         else
             p->i_lookahead_threads = atoi(value);
     }
+    // slices 并行处理线程数量
     OPT("sliced-threads")
         p->b_sliced_threads = atobool(value);
+    // 是否开启同步预分析
     OPT("sync-lookahead")
     {
         if( !strcasecmp(value, "auto") )
@@ -974,10 +984,12 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         else
             p->i_sync_lookahead = atoi(value);
     }
+    // ？？？
     OPT2("deterministic", "n-deterministic")
         p->b_deterministic = atobool(value);
     OPT("cpu-independent")
         p->b_cpu_independent = atobool(value);
+    // base/main/high ?
     OPT2("level", "level-idc")
     {
         if( !strcmp(value, "1b") )
@@ -987,19 +999,23 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         else
             p->i_level_idc = atoi(value);
     }
+    // 直译是，蓝光兼容
     OPT("bluray-compat")
         p->b_bluray_compat = atobool(value);
     OPT("avcintra-class")
         p->i_avcintra_class = atoi(value);
     OPT("avcintra-flavor")
         b_error |= parse_enum( value, x264_avcintra_flavor_names, &p->i_avcintra_flavor );
+    // SAR（Sample Aspect Ratio）指的是单个像素的宽高比，而不是整个视频的宽高比。
     OPT("sar")
     {
         b_error |= ( 2 != sscanf( value, "%d:%d", &p->vui.i_sar_width, &p->vui.i_sar_height ) &&
                      2 != sscanf( value, "%d/%d", &p->vui.i_sar_width, &p->vui.i_sar_height ) );
     }
+    // "undef", "show", "crop"
     OPT("overscan")
         b_error |= parse_enum( value, x264_overscan_names, &p->vui.i_overscan );
+    // "component", "pal", "ntsc", "secam", "mac", "undef"
     OPT("videoformat")
         b_error |= parse_enum( value, x264_vidformat_names, &p->vui.i_vidformat );
     OPT("fullrange")
@@ -1043,6 +1059,7 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
     }
     OPT("alternative-transfer")
         b_error |= parse_enum( value, x264_transfer_names, &p->i_alternative_transfer );
+    // 指定输出 fps，看起支持浮点数的 fps
     OPT("fps")
     {
         int64_t i_fps_num;
@@ -1070,10 +1087,12 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
             }
         }
     }
+    // 最多可以参考多少帧
     OPT2("ref", "frameref")
         p->i_frame_reference = atoi(value);
     OPT("dpb-size")
         p->i_dpb_size = atoi(value);
+    // GOP 大小相关
     OPT("keyint")
     {
         if( strstr( value, "infinite" ) )
@@ -1087,6 +1106,8 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         if( p->i_keyint_max < p->i_keyint_min )
             p->i_keyint_max = p->i_keyint_min;
     }
+    // 场景如果变化很大的话，是否切割帧，应该作为是否插入 I 帧
+    // 在x264视频编码器中，scenecut参数用于指示编码器在处理视频帧时对场景变换的敏感度。当两个连续帧之间的差异超过一定阈值时，x264会认为发生了场景变换。这个参数的默认值是40，意味着如果当前帧与上一帧的差异小于40%，则不会被认为是场景变换。
     OPT("scenecut")
     {
         p->i_scenecut_threshold = atobool(value);
@@ -1096,10 +1117,17 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
             p->i_scenecut_threshold = atoi(value);
         }
     }
+    // 较少用到
     OPT("intra-refresh")
         p->b_intra_refresh = atobool(value);
+    // 最大 b 数量
     OPT("bframes")
         p->i_bframe = atoi(value);
+// b-adapt参数控制了x264编码器在使用B帧时的自适应策略。它可以接受的值包括：
+
+// 0：禁用B帧自适应模式。在这种情况下，编码器不会自动调整B帧的数量或位置，而是按照用户指定的设置进行编码。
+// 1：启用B帧自适应模式。编码器将根据输入内容和其他参数自动调整B帧的数量和位置，以最大程度地提高压缩效率。
+// 2：类似于1，但在参考帧选择上更加保守，以牺牲一些编码效率来获得更好的可预测性。
     OPT("b-adapt")
     {
         p->i_bframe_adaptive = atobool(value);
@@ -1109,8 +1137,15 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
             p->i_bframe_adaptive = atoi(value);
         }
     }
+    // 直接翻译，就是 B 帧偏见，应该是越大，B 帧越多
     OPT("b-bias")
         p->i_bframe_bias = atoi(value);
+    // b-pyramid
+    // 默认：normal
+    // 说明：允许B帧作为参照帧。如果关闭，那么只有I帧和P帧才能作为参照帧。可以作为参照帧的B帧的量化参数会介于P帧和普通B帧之间。只在–b-frames设置大于等于2时此选项才生效。如果是在为蓝光光盘编码，请使用none或者strict。
+    // none —— 不允许B帧作为参照帧；
+    // strict —— 一个图像组内只允许一个B帧参照帧，这是蓝光编码强制要求的标准；
+    // normal —— 任意使用B帧参照帧；
     OPT("b-pyramid")
     {
         b_error |= parse_enum( value, x264_b_pyramid_names, &p->i_bframe_pyramid );
@@ -1120,10 +1155,12 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
             p->i_bframe_pyramid = atoi(value);
         }
     }
+    // 在 Open GOP 中，GOP 的第一个帧并不一定是 I帧，而是可以是 B帧或 P帧，只要它能够引用到之前 GOP 中的某些帧作为参考。这意味着，Open GOP 允许跨越 GOP 边界的参考，从而提供了更高的灵活性和压缩效率。
     OPT("open-gop")
         p->b_open_gop = atobool(value);
     OPT("nf")
         p->b_deblocking_filter = !atobool(value);
+    // 去块效应，去块效应是一种视频编码技朋术，用于减少视频压缩过程中产生的块效应。块效应是指在视频压缩过程中，由于图像被分割成块进行压缩，导致相邻块之间的边界处出现明显的不连续现象。
     OPT2("filter", "deblock")
     {
         if( 2 == sscanf( value, "%d:%d", &p->i_deblocking_filter_alphac0, &p->i_deblocking_filter_beta ) ||
@@ -1139,6 +1176,7 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         else
             p->b_deblocking_filter = atobool(value);
     }
+    // slice 编码模式相关
     OPT("slice-max-size")
         p->i_slice_max_size = atoi(value);
     OPT("slice-max-mbs")
@@ -1149,10 +1187,13 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->i_slice_count = atoi(value);
     OPT("slices-max")
         p->i_slice_count_max = atoi(value);
+
+    // 是否启用 cabac，否则使用 cavlc
     OPT("cabac")
         p->b_cabac = atobool(value);
     OPT("cabac-idc")
         p->i_cabac_init_idc = atoi(value);
+    // 场编码
     OPT("interlaced")
         p->b_interlaced = atobool(value);
     OPT("tff")
@@ -1164,6 +1205,8 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
     }
     OPT("constrained-intra")
         p->b_constrained_intra = atobool(value);
+
+    // 指定自定义量化矩阵
     OPT("cqm")
     {
         if( strstr( value, "flat" ) )
@@ -1235,6 +1278,7 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         b_error |= parse_cqm( value, p->cqm_8py, 64 );
         b_error |= parse_cqm( value, p->cqm_8pc, 64 );
     }
+    // 日志级别
     OPT("log")
         p->i_log_level = atoi(value);
     OPT("dump-yuv")
@@ -1259,18 +1303,23 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->analyse.i_weighted_pred = atoi(value);
     OPT2("direct", "direct-pred")
         b_error |= parse_enum( value, x264_direct_pred_names, &p->analyse.i_direct_mv_pred );
+    // 增加 Chroma QP Offset 可以使色度通道的量化参数变大，从而使色度细节更多地被保留，这有助于提高色彩的准确性和保真度，但可能会导致文件大小增加。相反，减小 Chroma QP Offset 则会使色度通道的量化参数变小，导致色彩细节的丢失，但可以实现更高的压缩比，从而减小文件大小。
     OPT("chroma-qp-offset")
         p->analyse.i_chroma_qp_offset = atoi(value);
+    // 指定，运动估计的算法
     OPT("me")
         b_error |= parse_enum( value, x264_motion_est_names, &p->analyse.i_me_method );
+    // 运动搜索的范围，一般来说，merange 参数的默认值是 16，这意味着编码器将在水平和垂直方向上搜索 16 个像素单位的范围以寻找最佳匹配块。越大编码速度越慢，但编码效果越好。
     OPT2("merange", "me-range")
         p->analyse.i_me_range = atoi(value);
     OPT2("mvrange", "mv-range")
         p->analyse.i_mv_range = atoi(value);
     OPT2("mvrange-thread", "mv-range-thread")
         p->analyse.i_mv_range_thread = atoi(value);
+    // 亚像素搜索
     OPT2("subme", "subq")
         p->analyse.i_subpel_refine = atoi(value);
+    // 心理视觉优化深度？？？
     OPT("psy-rd")
     {
         if( 2 == sscanf( value, "%f:%f", &p->analyse.f_psy_rd, &p->analyse.f_psy_trellis ) ||
@@ -1293,6 +1342,13 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->analyse.b_chroma_me = atobool(value);
     OPT("mixed-refs")
         p->analyse.b_mixed_references = atobool(value);
+    // 网格？？？
+// x264中的trellis是一个高级编码特性，属于量化过程的一部分，主要用于提高视频编码效率和图像质量。Trellis量化是一种基于路径选择的优化方法，源自通信理论中的“trellis”编码概念，它通过考虑相邻编码决策的联合代价来优化每个块的量化过程。
+
+// 工作原理：
+// 联合优化：Trellis量化不仅仅基于单个宏块或区块的量化效果来做出决策，而是考虑当前区块以及与其相邻的区块的联合编码成本，通过构建一个成本“树”或“网格”（即trellis），寻找全局最优的量化路径。
+// DCT系数处理：在离散余弦变换（DCT）域中，trellis量化特别关注于高频（AC）系数的处理，尝试减少这些系数的比特数，同时尽量保持视觉质量不受明显影响。通过比较不同量化路径下的预测误差和比特成本，trellis算法会选择总成本最低的路径。
+// 质量与效率：启用trellis量化可以在一定程度上减少比特率，同时保持或轻微提升视频的主观质量，尤其是在高比特率编码（如CRF模式下）和高质量要求的场景中更为有效。它是一种折衷方案，通过增加编码计算复杂度来换取更好的压缩效率。
     OPT("trellis")
         p->analyse.i_trellis = atoi(value);
     OPT("fast-pskip")
@@ -1305,16 +1361,22 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->analyse.i_luma_deadzone[1] = atoi(value);
     OPT("nr")
         p->analyse.i_noise_reduction = atoi(value);
+    // 指定码率，设置固定码率 abr a 是 average
     OPT("bitrate")
     {
         p->rc.i_bitrate = atoi(value);
         p->rc.i_rc_method = X264_RC_ABR;
     }
+    // 指定的话，启用固定 qp
+    // 如果在编码时设置了--qp 32，此时指定的32，实际上是P帧的QP值。而I帧和B帧的QP值，需要根据P帧的QP值，以及f_ip_factor和f_pb_factor的值进行计算得到。
     OPT2("qp", "qp_constant")
     {
         p->rc.i_qp_constant = atoi(value);
         p->rc.i_rc_method = X264_RC_CQP;
     }
+    // 固定质量编码模式，码率会根据需要波动
+    // 0 无损
+    // CRF 模式下的编码器会根据设定的 CRF 值尝试以恒定的质量来编码视频，而不是以恒定的比特率。
     OPT("crf")
     {
         p->rc.f_rf_constant = atof(value);
@@ -1322,28 +1384,40 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
     }
     OPT("crf-max")
         p->rc.f_rf_constant_max = atof(value);
+    // 目的：rc-lookahead通过提前分析接下来的几帧，为当前帧的编码决策提供信息。这包括确定合适的量化参数（QP）、帧类型（I帧、P帧、B帧）等，以达到既定的比特率目标同时保持最佳可能的视频质量。
+    // 工作原理：在实际编码一帧之前，lookahead会读取并分析一段帧序列（这个数量可以通过参数rc.i_lookahead配置），执行一些复杂的预测和分析操作，如运动估计、复杂度分析等。这些分析帮助编码器预见未来帧的变化，从而做出更明智的编码决策，比如决定何时插入关键帧，如何调整后续帧的压缩率以应对复杂场景。
     OPT("rc-lookahead")
         p->rc.i_lookahead = atoi(value);
+
+    // 最大最小 qp
     OPT2("qpmin", "qp-min")
         p->rc.i_qp_min = atoi(value);
     OPT2("qpmax", "qp-max")
         p->rc.i_qp_max = atoi(value);
+
+    // qpstep 参数指定了每个量化步长的大小，从而影响了量化过程对图像细节的舍弃程度。
     OPT2("qpstep", "qp-step")
         p->rc.i_qp_step = atoi(value);
+    // 码控相关
     OPT("ratetol")
         p->rc.f_rate_tolerance = !strncmp("inf", value, 3) ? 1e9 : atof(value);
+    // 码率波动最大值
     OPT("vbv-maxrate")
         p->rc.i_vbv_max_bitrate = atoi(value);
     OPT("vbv-bufsize")
         p->rc.i_vbv_buffer_size = atoi(value);
     OPT("vbv-init")
         p->rc.f_vbv_buffer_init = atof(value);
+    // 具体来说，ipratio 参数表示 P 帧的比特率相对于 I 帧的比特率的比例。例如，如果 ipratio 设置为 1.2，则表示 P 帧的比特率将是 I 帧比特率的 1.2 倍。这意味着编码器将更多的比特率分配给 P 帧，以改善视频的压缩效率，并在保持视频质量的同时减小文件大小。
     OPT2("ipratio", "ip-factor")
         p->rc.f_ip_factor = atof(value);
+    // 用于设置 P 帧和 B 帧之间的比特率比例
     OPT2("pbratio", "pb-factor")
         p->rc.f_pb_factor = atof(value);
+    // adapt-qp 自适应 qp
     OPT("aq-mode")
         p->rc.i_aq_mode = atoi(value);
+    // 自适应 qp 的强度，越高，画面细节 qp 分配越多，质量越好，计算复杂度越高。涉及细节 qp 的分配
     OPT("aq-strength")
         p->rc.f_aq_strength = atof(value);
     OPT("pass")
@@ -1357,8 +1431,10 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         CHECKED_ERROR_PARAM_STRDUP( p->rc.psz_stat_in, p, value );
         CHECKED_ERROR_PARAM_STRDUP( p->rc.psz_stat_out, p, value );
     }
+    // 抑制 mbtree 的强度
     OPT("qcomp")
         p->rc.f_qcompress = atof(value);
+    // 是否开启宏块树
     OPT("mbtree")
         p->rc.b_mb_tree = atobool(value);
     OPT("qblur")
@@ -1378,10 +1454,14 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->b_aud = atobool(value);
     OPT("sps-id")
         p->i_sps_id = atoi(value);
+    // global-header 改变的是 b_repeat_headers
+    // 整个编码只发送一个 sps pps
     OPT("global-header")
         p->b_repeat_headers = !atobool(value);
+    // repeat-headers 每个一个 I 帧都发送 sps pps
     OPT("repeat-headers")
         p->b_repeat_headers = atobool(value);
+    // nalu 的封装格式，记住 annexb 是 00 00 00 01 开头的
     OPT("annexb")
         p->b_annexb = atobool(value);
     OPT("force-cfr")
@@ -1394,10 +1474,12 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->b_pic_struct = atobool(value);
     OPT("fake-interlaced")
         p->b_fake_interlaced = atobool(value);
+    // 3d 视频使用?
     OPT("frame-packing")
         p->i_frame_packing = atoi(value);
     OPT("stitchable")
         p->b_stitchable = atobool(value);
+    // opencl 相关
     OPT("opencl")
         p->b_opencl = atobool( value );
     OPT("opencl-clbin")

@@ -198,7 +198,7 @@ typedef struct
     {
         int i_difference_of_pic_nums;
         int i_poc;
-    } mmco[X264_REF_MAX]; // 参考帧相关
+    } mmco[X264_REF_MAX]; // 参考帧管理相关
 
     int i_cabac_init_idc;
 

@@ -1025,12 +1025,12 @@ static int slicetype_frame_cost( x264_t *h, x264_mb_analysis_t *a,
             }
 
             i_score = fenc->i_cost_est[b-p0][p1-b];
-            if( b != p1 )
-                i_score = (uint64_t)i_score * 100 / (120 + h->param.i_bframe_bias);
+            if( b != p1 ) // 存在后向参考，b 是 b 帧
+                i_score = (uint64_t)i_score * 100 / (120 + h->param.i_bframe_bias); // bias 越大，score 越小，看起来 score 越小，越倾向于选择 b 帧
             else
                 fenc->b_intra_calculated = 1;
 
-            fenc->i_cost_est[b-p0][p1-b] = i_score;
+            fenc->i_cost_est[b-p0][p1-b] = i_score; // 存储当前帧与参考帧之间的编码成本估计。
             x264_emms();
         }
     }

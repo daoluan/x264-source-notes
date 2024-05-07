@@ -31,6 +31,7 @@ typedef struct
     // pix1  stride = FENC_STRIDE
     // pix2  stride = FDEC_STRIDE
     // p_dst stride = FDEC_STRIDE
+    // 下面都是函数指针，在不同的平台可以用不同实现，甚至可以替换自己的实现
     void (*sub4x4_dct) ( dctcoef dct[16], pixel *pix1, pixel *pix2 );
     void (*add4x4_idct)( pixel *p_dst, dctcoef dct[16] );
 

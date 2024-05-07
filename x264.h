@@ -304,19 +304,36 @@ typedef struct x264_zone_t
 typedef struct x264_param_t
 {
     /* CPU flags */
+    // CPU 核心？
     uint32_t    cpu;
+    // 处理线程，部分流程可以并行处理
     int         i_threads;           /* encode multiple frames in parallel */ // 帧并行处理
+    // 前处理线程数量
     int         i_lookahead_threads; /* multiple threads for lookahead analysis */ // 宏块并行分析
+    // 一般不使用
     int         b_sliced_threads;  /* Whether to use slice-based threading. */ // 一般不使用了，除非低时延
     int         b_deterministic; /* whether to allow non-deterministic optimizations when threaded */
     int         b_cpu_independent; /* force canonical behavior rather than cpu-dependent optimal algorithms */
+    // 如果是同步的话，那么不初始化线程
     int         i_sync_lookahead; /* threaded lookahead buffer */
 
     /* Video Properties */
+    // 宽
     int         i_width;
+    // 高
     int         i_height;
+
+    // CSP（Codec Specification Paper）通常指的是编码码流的编解码器规范文档。在视频压缩和传输领域，CSP 描述了编码器如何将原始视频数据压缩成比特流，以及解码器如何将这些比特流解码回视频数据的过程。CSP 详细说明了编解码器的功能和特性，包括支持的编码格式、比特率、分辨率、帧率、压缩算法、工具和编解码器的实现细节。
+    // 在讨论编码比特流时，CSP 是一个重要的参考文档，因为它定义了编码比特流的语法和语义。这包括如何解析比特流，如何从比特流中提取编码的图像和声音数据，以及如何重建原始媒体内容。CSP 还可能包括错误处理和兼容性问题的指导，以及如何确保不同厂商的编解码器之间能够互相操作。
+    // 例如，HEVC（High Efficiency Video Coding）和 AVC（Advanced Video Coding）等视频编码标准都有自己的 CSP，这些文档详细描述了编码器的操作和比特流的格式。遵守 CSP 可以确保编码器和解码器之间的互操作性，使得视频内容能够在不同的设备和平台上正确播放。
     int         i_csp;         /* CSP of encoded bitstream */
+
+    // 位深，
+    // 视频编解码中的“BitDepth”（位深度）是指在编码或解码视频信号时，用于表示每个像素颜色分量（通常是红、绿、蓝，RGB）或亮度与色差（如YUV色彩空间中的Y、U、V）的二进制位数。位深度决定了每个像素可以表示的颜色数量和精度，直接影响视频的颜色深度和动态范围。
+    // yuv420 等
     int         i_bitdepth;
+
+    // baseline/main ...
     int         i_level_idc;
     int         i_frame_total; /* number of frames to encode if known, else 0 */
 
@@ -472,6 +489,7 @@ typedef struct x264_param_t
         char        *psz_zones;     /* alternate method of specifying zones */
     } rc;
 
+    // 剪裁
     /* Cropping Rectangle parameters: added to those implicitly defined by
        non-mod16 video resolutions. */
     struct
@@ -516,14 +534,19 @@ typedef struct x264_param_t
     /* Muxing parameters */
     int b_aud;                  /* generate access unit delimiters */
     int b_repeat_headers;       /* put SPS/PPS before each keyframe */
+    // 00 00 00 01 or 00 00 01
     int b_annexb;               /* if set, place start codes (4 bytes) before NAL units,
                                  * otherwise place size (4 bytes) before NAL units. */
+
+    // spspps 初始化的时候用到
     int i_sps_id;               /* SPS and PPS id number */
     int b_vfr_input;            /* VFR input.  If 1, use timebase and timestamps for ratecontrol purposes.
                                  * If 0, use fps only. */
     int b_pulldown;             /* use explicitly set timebase for CFR */
+    // fps
     uint32_t i_fps_num;
     uint32_t i_fps_den;
+    // 视频时间基
     uint32_t i_timebase_num;    /* Timebase numerator */
     uint32_t i_timebase_den;    /* Timebase denominator */
 

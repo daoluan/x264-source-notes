@@ -117,10 +117,11 @@ typedef struct x264_frame
     int     ref_poc[2][X264_REF_MAX];
     int16_t inv_ref_poc[2]; // inverse values of ref0 poc to avoid divisions in temporal MV prediction
 
+    // 自适应 B 帧决策
     /* for adaptive B-frame decision.
      * contains the SATD cost of the lowres frame encoded in various modes
      * FIXME: how big an array do we need? */
-    int     i_cost_est[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
+    int     i_cost_est[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2]; // 二维数组大小，和 B 帧数量有关
     int     i_cost_est_aq[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
     int     i_satd; // the i_cost_est of the selected frametype
     int     i_intra_mbs[X264_BFRAME_MAX+2];
