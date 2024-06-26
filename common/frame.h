@@ -37,14 +37,19 @@
 typedef struct x264_frame
 {
     /* */
+    // 留一个指针，用于放置 malloc 的数据
     uint8_t *base;       /* Base pointer for all malloced data in this frame. */
     int     i_poc;
     int     i_delta_poc[2];
+    // 帧类型？
     int     i_type;
+    // 强制帧类型
     int     i_forced_type;
     int     i_qpplus1;
+    // pts/dts
     int64_t i_pts;
     int64_t i_dts;
+
     int64_t i_reordered_pts;
     int64_t i_duration;  /* in SPS time_scale units (i.e 2 * timebase units) used for vfr */
     float   f_duration;  /* in seconds */
@@ -59,8 +64,9 @@ typedef struct x264_frame
     int     i_frame_num; /* 7.4.3 frame_num */
     int     b_kept_as_ref;
     int     i_pic_struct;
+    // 是否为 IDR 帧
     int     b_keyframe;
-    uint8_t b_fdec;
+    uint8_t b_fdec; // 是否为解码帧
     uint8_t b_last_minigop_bframe; /* this frame is the last b in a sequence of bframes */
     uint8_t i_bframes;   /* number of bframes following this nonb in coded order */
     float   f_qp_avg_rc; /* QPs as decided by ratecontrol */
@@ -68,12 +74,13 @@ typedef struct x264_frame
     float   f_crf_avg;   /* Average effective CRF for this frame */
     int     i_poc_l0ref0; /* poc of first refframe in L0, used to check if direct temporal is possible */
 
+    // 解码后/编码前的帧数据，即视频压缩前的数据，原始数据
     /* YUV buffer */
-    int     i_csp; /* Internal csp */
-    int     i_plane;
-    int     i_stride[3];
-    int     i_width[3];
-    int     i_lines[3];
+    int     i_csp; /* Internal csp */ // 颜色空间
+    int     i_plane; // 通道数
+    int     i_stride[3]; // 每个通道的步长
+    int     i_width[3]; // 每个通道的宽度
+    int     i_lines[3]; // 每个通道的高度
     int     i_stride_lowres;
     int     i_width_lowres;
     int     i_lines_lowres;
@@ -95,7 +102,7 @@ typedef struct x264_frame
     int b_duplicate;
     struct x264_frame *orig;
 
-    /* motion data */
+    /* motion data */ // 运动估计相关
     int8_t  *mb_type;
     uint8_t *mb_partition;
     int16_t (*mv[2])[2];
@@ -168,6 +175,7 @@ typedef struct x264_frame
     /* interactive encoder control */
     int     b_corrupt;
 
+    // 原来 sei 是这样保存的
     /* user sei */
     x264_sei_t extra_sei;
 

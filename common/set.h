@@ -27,6 +27,8 @@
 #ifndef X264_SET_H
 #define X264_SET_H
 
+// set.h 参数集合 sps 序列参数集合 pps 图像参数集合
+
 enum cqm4_e
 {
     CQM_4IY = 0,

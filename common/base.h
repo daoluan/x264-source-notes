@@ -103,9 +103,9 @@ enum profile_e
 enum chroma_format_e
 {
     CHROMA_400 = 0,
-    CHROMA_420 = 1,
-    CHROMA_422 = 2,
-    CHROMA_444 = 3,
+    CHROMA_420 = 1, // 现在用的最常用的
+    CHROMA_422 = 2, // 电视广播
+    CHROMA_444 = 3, // 保存所有的色度，视频最大。理论上，444 比 422 大一倍
 };
 
 enum slice_type_e

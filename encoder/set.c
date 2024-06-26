@@ -662,6 +662,21 @@ void x264_sei_pic_timing_write( x264_t *h, bs_t *s )
 
     if( sps->vui.b_pic_struct_present )
     {
+        // 感觉是在场编码里才用到
+        // i_pic_struct
+        // enum pic_struct_e
+        // {
+        //     PIC_STRUCT_AUTO              = 0, // automatically decide (default)
+        //     PIC_STRUCT_PROGRESSIVE       = 1, // progressive frame
+        //     // "TOP" and "BOTTOM" are not supported in x264 (PAFF only)
+        //     PIC_STRUCT_TOP_BOTTOM        = 4, // top field followed by bottom
+        //     PIC_STRUCT_BOTTOM_TOP        = 5, // bottom field followed by top
+        //     PIC_STRUCT_TOP_BOTTOM_TOP    = 6, // top field, bottom field, top field repeated
+        //     PIC_STRUCT_BOTTOM_TOP_BOTTOM = 7, // bottom field, top field, bottom field repeated
+        //     PIC_STRUCT_DOUBLE            = 8, // double frame
+        //     PIC_STRUCT_TRIPLE            = 9, // triple frame
+        // };
+
         bs_write( &q, 4, h->fenc->i_pic_struct-1 ); // We use index 0 for "Auto"
 
         // These clock timestamps are not standardised so we don't set them

@@ -1316,7 +1316,16 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->analyse.i_mv_range = atoi(value);
     OPT2("mvrange-thread", "mv-range-thread")
         p->analyse.i_mv_range_thread = atoi(value);
-    // 亚像素搜索
+    // 亚像素搜索：越大复杂度越高，preset 越大，越慢
+/*
+在视频编码中，亚像素运动估计是一种提高编码效率和视频质量的技术。它的基本思想是，不仅在原始像素网格上搜索最佳匹配块，而且在原始像素网格之间的亚像素位置上搜索最佳匹配块。
+
+在传统的像素级运动估计中，只能在整数像素位置上搜索最佳匹配块，这可能会导致运动估计的误差较大。而在亚像素级运动估计中，可以在小数像素位置上搜索最佳匹配块，这可以更准确地描述运动，从而提高编码效率和视频质量。
+
+例如，如果一个块在当前帧中的位置是(10, 10)，在参考帧中的最佳匹配块的位置可能是(10.5, 10.3)。在像素级运动估计中，我们只能选择(10, 10)或(11, 10)作为最佳匹配块的位置，这可能会导致运动估计的误差较大。而在亚像素级运动估计中，我们可以选择(10.5, 10.3)作为最佳匹配块的位置，这可以更准确地描述运动。
+
+在实际实现中，亚像素级运动估计通常通过插值技术来实现。插值技术可以生成原始像素网格之间的像素值，从而实现在小数像素位置上搜索最佳匹配块。
+*/
     OPT2("subme", "subq")
         p->analyse.i_subpel_refine = atoi(value);
     // 心理视觉优化深度？？？
@@ -1365,7 +1374,7 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
     OPT("bitrate")
     {
         p->rc.i_bitrate = atoi(value);
-        p->rc.i_rc_method = X264_RC_ABR;
+        p->rc.i_rc_method = X264_RC_ABR; // 指定了 Bitrate 就强制使用 ABR 模式
     }
     // 指定的话，启用固定 qp
     // 如果在编码时设置了--qp 32，此时指定的32，实际上是P帧的QP值。而I帧和B帧的QP值，需要根据P帧的QP值，以及f_ip_factor和f_pb_factor的值进行计算得到。
@@ -1396,9 +1405,12 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->rc.i_qp_max = atoi(value);
 
     // qpstep 参数指定了每个量化步长的大小，从而影响了量化过程对图像细节的舍弃程度。
+    // step 太大的话，画面细节会丢失，画面会变得模糊，但是文件大小会变小。
     OPT2("qpstep", "qp-step")
         p->rc.i_qp_step = atoi(value);
+
     // 码控相关
+    // 是否开启码控
     OPT("ratetol")
         p->rc.f_rate_tolerance = !strncmp("inf", value, 3) ? 1e9 : atof(value);
     // 码率波动最大值
@@ -1415,6 +1427,10 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
     OPT2("pbratio", "pb-factor")
         p->rc.f_pb_factor = atof(value);
     // adapt-qp 自适应 qp
+    // #define X264_AQ_NONE                 0
+    // #define X264_AQ_VARIANCE             1
+    // #define X264_AQ_AUTOVARIANCE         2
+    // #define X264_AQ_AUTOVARIANCE_BIASED  3
     OPT("aq-mode")
         p->rc.i_aq_mode = atoi(value);
     // 自适应 qp 的强度，越高，画面细节 qp 分配越多，质量越好，计算复杂度越高。涉及细节 qp 的分配
@@ -1466,6 +1482,7 @@ REALIGN_STACK int x264_param_parse( x264_param_t *p, const char *name, const cha
         p->b_annexb = atobool(value);
     OPT("force-cfr")
         p->b_vfr_input = !atobool(value);
+    // nal-hrd=cbr 会填充 nal 是码率平稳
     OPT("nal-hrd")
         b_error |= parse_enum( value, x264_nal_hrd_names, &p->i_nal_hrd );
     OPT("filler")

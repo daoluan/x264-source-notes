@@ -357,9 +357,12 @@ struct x264_t
         uint16_t i4x4_mode[QP_MAX+1][17];
     } *cost_table;
 
+    // 色度量化参数表
     const uint8_t   *chroma_qp_table; /* includes both the nonlinear luma->chroma mapping and chroma_qp_offset */
 
     /* Slice header */
+    // 在x264的结构体定义中，x264_slice_header_t sh;表示每个编码帧中当前正在处理的slice的头信息。尽管一个编码帧可以包含多个slice，但在任何给定时间点，编码器只处理一个slice。因此，编码器结构体中只需要一个x264_slice_header_t实例来存储当前slice的头信息。这种设计允许编码器逐个slice地进行处理，而不需要同时为一个帧中的所有slice保留头信息。当编码器完成一个slice的处理并开始处理下一个slice时，它会更新这个x264_slice_header_t实例以反映新slice的信息。
+    // x264 结构体被每个编码线程独占拥有，每个线程都有自己的slice头信息
     x264_slice_header_t sh;
 
     /* SPS / PPS */

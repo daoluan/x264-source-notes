@@ -424,7 +424,7 @@ typedef struct x264_param_t
         int          i_me_range; /* integer pixel motion estimation search range (from predicted mv) */
         int          i_mv_range; /* maximum length of a mv (in pixels). -1 = auto, based on level */
         int          i_mv_range_thread; /* minimum space between threads. -1 = auto, based on number of threads. */
-        int          i_subpel_refine; /* subpixel motion estimation quality */
+        int          i_subpel_refine; /* subpixel motion estimation quality */ // 亚像素运动估计质量
         int          b_chroma_me; /* chroma ME for subpel and mode decision in P-frames */
         int          b_mixed_references; /* allow each mb partition to have its own reference number */
         int          i_trellis;  /* trellis RD quantization */
@@ -542,6 +542,7 @@ typedef struct x264_param_t
     int i_sps_id;               /* SPS and PPS id number */
     int b_vfr_input;            /* VFR input.  If 1, use timebase and timestamps for ratecontrol purposes.
                                  * If 0, use fps only. */
+    // 在视频编码和处理中，pulldown 是一种技术，用于将视频从一种帧率转换到另一种帧率，通常用于适配不同的播放设备或标准。
     int b_pulldown;             /* use explicitly set timebase for CFR */
     // fps
     uint32_t i_fps_num;
